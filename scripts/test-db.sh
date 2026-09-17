@@ -42,8 +42,11 @@ try:
     with psycopg.connect(server.get_uri(), autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("SELECT 1 FROM pg_roles WHERE rolname = 'aicore'")
         if cur.fetchone() is None:
-            cur.execute("CREATE ROLE aicore LOGIN PASSWORD 'aicore'")
-            print("[test-db] created role 'aicore'")
+            # No password: this server is ephemeral and reachable only through a
+            # local socket (trust auth), so there is no credential to store. The
+            # Docker stack and every other environment require POSTGRES_PASSWORD.
+            cur.execute("CREATE ROLE aicore LOGIN")
+            print("[test-db] created role 'aicore' (local socket, trust auth)")
 
         cur.execute("SELECT 1 FROM pg_database WHERE datname = 'aicore'")
         if cur.fetchone() is None:
@@ -58,7 +61,8 @@ try:
     # ── Point the application at the live server ─────────────────────────────
     os.environ["AICORE_ENVIRONMENT"] = "test"
     os.environ["AICORE_LOG_LEVEL"] = "warning"
-    os.environ["AICORE_DATABASE_URL"] = f"postgresql+psycopg://aicore:aicore@/aicore?host={pgdata}"
+    # Local socket + trust auth: the URL needs no credentials, so none exist to leak.
+    os.environ["AICORE_DATABASE_URL"] = f"postgresql+psycopg:///aicore?host={pgdata}&user=aicore"
     sys.path.insert(0, os.path.join(os.environ["AICORE_REPO_ROOT"], "apps", "api", "src"))
 
     from aicore_api.config import Settings

@@ -22,7 +22,7 @@ The API reads `AICORE_DATABASE_URL` (a `SecretStr`, never logged, never returned
 to clients). Example for local development:
 
 ```
-AICORE_DATABASE_URL=postgresql+psycopg://aicore:aicore@localhost:5432/aicore
+AICORE_DATABASE_URL=postgresql+psycopg://aicore:<POSTGRES_PASSWORD>@localhost:5432/aicore
 ```
 
 Docker Compose builds this URL from `POSTGRES_USER`, `POSTGRES_PASSWORD` and

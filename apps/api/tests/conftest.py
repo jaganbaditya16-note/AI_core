@@ -14,6 +14,10 @@ from collections.abc import Iterator
 import pytest
 
 # ── Environment (must run before `aicore_api` is imported) ────────────────────
+# The credentials below are fake on purpose: they point at a closed port so
+# readiness fails deterministically, and they give test_health_ready.py a
+# credential-bearing URL to prove the readiness detail never leaks one.
+# No real password appears anywhere in this repository.
 os.environ.setdefault("AICORE_ENVIRONMENT", "test")
 os.environ.setdefault(
     "AICORE_DATABASE_URL", "postgresql+psycopg://aicore:aicore@127.0.0.1:1/aicore"

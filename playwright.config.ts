@@ -18,7 +18,9 @@ const apiCommand = [
   "PYTHONPATH=apps/api/src",
   "AICORE_ENVIRONMENT=test",
   "AICORE_LOG_LEVEL=warning",
-  "AICORE_DATABASE_URL=postgresql+psycopg://aicore:aicore@127.0.0.1:1/aicore",
+  // Port 1 is deliberately closed: the API must report a degraded readiness
+  // state deterministically, and no credential is needed to test that.
+  "AICORE_DATABASE_URL=postgresql+psycopg://127.0.0.1:1/aicore",
   "AICORE_DATABASE_CONNECT_TIMEOUT_SECONDS=1",
   "apps/api/.venv/bin/python -m uvicorn aicore_api.main:app --host 127.0.0.1 --port 8000",
 ].join(" ");

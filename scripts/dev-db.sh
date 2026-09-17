@@ -35,7 +35,8 @@ server = pgserver.get_server(pgdata, cleanup_mode=None)
 with psycopg.connect(server.get_uri(), autocommit=True) as conn, conn.cursor() as cur:
     cur.execute("SELECT 1 FROM pg_roles WHERE rolname = 'aicore'")
     if cur.fetchone() is None:
-        cur.execute("CREATE ROLE aicore LOGIN PASSWORD 'aicore'")
+        # Local socket + trust auth: no password is set, so none can leak.
+        cur.execute("CREATE ROLE aicore LOGIN")
     cur.execute("SELECT 1 FROM pg_database WHERE datname = 'aicore'")
     if cur.fetchone() is None:
         cur.execute("CREATE DATABASE aicore OWNER aicore")
@@ -46,7 +47,7 @@ with psycopg.connect(server.get_uri(), autocommit=True) as conn, conn.cursor() a
 
 print("\n[dev-db] export this for the API:\n", flush=True)
 print(
-    f'  export AICORE_DATABASE_URL="postgresql+psycopg://aicore:aicore@/aicore?host={pgdata}"\n',
+    f'  export AICORE_DATABASE_URL="postgresql+psycopg:///aicore?host={pgdata}&user=aicore"\n',
     flush=True,
 )
 print("[dev-db] ready — press Ctrl-C to stop", flush=True)

@@ -1,0 +1,72 @@
+[project]
+name = "aicore-api"
+version = "0.1.0"
+description = "AICore API — Phase 0 foundation (health endpoints only)"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "httpx>=0.27",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "types-psutil",
+  "pyyaml>=6.0",       # scripts/validate-compose.sh
+  "pgserver>=0.1.4",   # scripts/test-db.sh, scripts/dev-db.sh (real PostgreSQL, no Docker)
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "integration: requires a reachable PostgreSQL instance (skipped by default)",
+]
+
+# ── Linting ───────────────────────────────────────────────────────────────────
+# "S" is flake8-bandit (security rules) — appropriate for a security product.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "S", "RUF"]
+ignore = [
+  # Emitting a raised exception in logs is handled by the global handler.
+  "TRY301",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use asserts and example credentials.
+"tests/*" = ["S101", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["aicore_api"]
+
+# ── Types ─────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

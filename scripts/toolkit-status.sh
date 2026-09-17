@@ -18,22 +18,36 @@ npm  -v >/dev/null 2>&1 && ok "npm v$(npm -v)"   || bad "npm missing"
 yarn -v >/dev/null 2>&1 && ok "yarn v$(yarn -v)" || meh "yarn missing (npm is the primary manager here)"
 bun  -v >/dev/null 2>&1 && ok "bun $(bun -v) (required by gstack)" || bad "bun missing — gstack needs it"
 
-hdr "frontend (vite + react + tailwind + framer-motion)"
-if [ -d node_modules ]; then
-  ok "node_modules present ($(du -sh node_modules 2>/dev/null | cut -f1))"
+hdr "frontend (Next.js + tailwind + framer-motion)"
+if [ -d apps/web ]; then
+  ok "apps/web present"
+  for pkg in next react framer-motion tailwindcss; do
+    if node -e "require.resolve('$pkg/package.json')" >/dev/null 2>&1; then
+      v=$(node -p "require('$pkg/package.json').version" 2>/dev/null)
+      ok "$pkg@$v"
+    else
+      bad "$pkg not installed"
+    fi
+  done
+  [ -f apps/web/src/app/layout.tsx ] && ok "App Router layout present" || meh "apps/web/src/app/layout.tsx missing"
+  [ -f apps/web/scripts/verify-motion.mjs ] && ok "motion verifier present (npm run verify:motion)" || meh "motion verifier missing"
 else
-  bad "node_modules missing — run: bash scripts/bootstrap.sh"
+  bad "apps/web missing"
 fi
-for pkg in react react-dom framer-motion tailwindcss vite; do
-  if node -e "require.resolve('$pkg/package.json')" >/dev/null 2>&1; then
-    v=$(node -p "require('$pkg/package.json').version" 2>/dev/null)
-    ok "$pkg@$v"
+
+hdr "backend (FastAPI)"
+if [ -d apps/api ]; then
+  ok "apps/api present"
+  if [ -x apps/api/.venv/bin/python ]; then
+    v=$(apps/api/.venv/bin/python -c "import fastapi; print(fastapi.__version__)" 2>/dev/null)
+    ok "virtualenv present (fastapi ${v:-?})"
   else
-    bad "$pkg not installed"
+    meh "apps/api/.venv missing — run: bash scripts/py.sh -c pass"
   fi
-done
-[ -f src/lib/utils.ts ] && ok "shadcn helper src/lib/utils.ts" || meh "src/lib/utils.ts missing"
-[ -f components.json ]  && ok "components.json (shadcn / 21st add target)" || meh "components.json missing"
+  [ -f apps/api/src/aicore_api/main.py ] && ok "application factory present" || bad "aicore_api.main missing"
+else
+  bad "apps/api missing"
+fi
 
 hdr "gstack"
 GS="$HOME/.claude/skills/gstack"

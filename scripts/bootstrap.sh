@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Restore this workspace after a fresh clone / sandbox reset.
 #
-# The sandbox does NOT persist node_modules, so run this once per fresh
-# checkout (or whenever `npm run dev` complains about missing packages).
+#   bash scripts/bootstrap.sh            # dependencies only
+#   bash scripts/bootstrap.sh --full     # + local PostgreSQL check
 #
-#   bash scripts/bootstrap.sh            # deps only
-#   bash scripts/bootstrap.sh --tools    # deps + external tool checkouts + skills
+# `node_modules` and the Python virtualenv are not preserved by every
+# environment, so run this once per fresh checkout.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,11 +13,10 @@ cd "$ROOT"
 
 log() { printf '\033[1;36m[bootstrap]\033[0m %s\n' "$*"; }
 
-# Native modules (better-sqlite3, used by ruflo for persistent memory) compile
-# against Node's C++ headers. node-gyp normally downloads them from nodejs.org,
-# which is unreachable in this sandbox — but the headers ship with the local
-# Node install, so point node-gyp at them. `npm config set nodedir` is rejected
-# by npm 10, so this must be an environment variable.
+# Native modules compile against Node's C++ headers. node-gyp normally downloads
+# them from nodejs.org, which is unreachable in some sandboxes — but the headers
+# ship with the local Node install, so point node-gyp at them.
+# (`npm config set nodedir` is rejected by npm 10; it must be an environment variable.)
 if [ -z "${npm_config_nodedir:-}" ]; then
   for hdr in /usr/local/include/node /usr/include/node "$(dirname "$(command -v node)")/../include/node"; do
     if [ -f "$hdr/node.h" ]; then
@@ -28,17 +27,23 @@ if [ -z "${npm_config_nodedir:-}" ]; then
   done
 fi
 
-log "installing npm dependencies (react, vite, tailwind, framer-motion, shadcn utils)"
+log "installing workspace dependencies (web + shared types)"
 if [ -f package-lock.json ]; then
   npm ci || npm install
 else
   npm install
 fi
 
-if [ "${1:-}" = "--tools" ]; then
-  bash "$ROOT/scripts/install-tools.sh"
-  bash "$ROOT/scripts/sync-skills.sh"
+log "preparing the API virtualenv"
+bash "$ROOT/scripts/py.sh" -c "pass"
+
+if [ "${1:-}" = "--full" ]; then
+  log "checking the database foundation against a real PostgreSQL"
+  bash "$ROOT/scripts/test-db.sh"
 fi
 
-log "done. start the app with: npm run dev -- --host 0.0.0.0"
-log "check every integration with: bash scripts/toolkit-status.sh"
+log "done."
+log "  start a database:  bash scripts/dev-db.sh"
+log "  start the API:     npm run dev:api"
+log "  start the web app: npm run dev"
+log "  verify the phase:  npm run verify"

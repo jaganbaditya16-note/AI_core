@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens.
+ *
+ * Namespaced `aicore-*` so they are unambiguous in a monorepo that also holds
+ * the design-time workspace (see .21st/design.json for the visual language).
+ * Dark-first, restrained, no decorative gradients on functional surfaces.
+ */
+@theme {
+  --color-aicore-bg: #0b0d12;
+  --color-aicore-surface: #12151c;
+  --color-aicore-surface-raised: #171b24;
+  --color-aicore-border: #232936;
+  --color-aicore-fg: #e6e9ef;
+  --color-aicore-fg-muted: #9aa4b2;
+  --color-aicore-fg-subtle: #6b7480;
+  --color-aicore-accent: #5b7cfa;
+  --color-aicore-ok: #3fb950;
+  --color-aicore-warn: #d29922;
+  --color-aicore-danger: #f85149;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--color-aicore-bg);
+  color: var(--color-aicore-fg);
+}
+
+/* Respect users who ask for less motion; framer-motion animations still run
+   but are reduced to near-instant by the component-level guard. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

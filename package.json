@@ -1,33 +1,34 @@
 {
-  "name": "ai-core",
+  "name": "aicore",
+  "version": "0.0.0",
   "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "description": "AI Core workspace — gstack + superpowers + ruflo + 21st.dev + framer-motion",
-  "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
-    "typecheck": "tsc --noEmit",
-    "verify:motion": "bun scripts/verify-motion.tsx"
+  "description": "AICore — Enterprise AI Control Plane (Phase 0 foundation)",
+  "license": "SEE LICENSE IN LICENSE",
+  "workspaces": [
+    "apps/web",
+    "packages/types"
+  ],
+  "engines": {
+    "node": ">=20.9"
   },
-  "dependencies": {
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "framer-motion": "^13.4.0",
-    "lucide-react": "^1.46.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "tailwind-merge": "^3.7.0"
+  "scripts": {
+    "dev": "npm run dev --workspace @aicore/web",
+    "dev:api": "bash scripts/dev-api.sh",
+    "build": "npm run build --workspace @aicore/web",
+    "lint": "npm run lint --workspace @aicore/web",
+    "lint:api": "bash scripts/py.sh -m ruff check apps/api/src apps/api/tests",
+    "format": "prettier --write . ; bash scripts/py.sh -m ruff format apps/api/src apps/api/tests",
+    "format:check": "prettier --check . ; bash scripts/py.sh -m ruff format --check apps/api/src apps/api/tests",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck:api": "bash scripts/py.sh -m mypy apps/api/src",
+    "test:api": "bash scripts/py.sh -m pytest -c apps/api/pyproject.toml apps/api/tests",
+    "test:e2e": "playwright test",
+    "verify": "bash scripts/verify.sh",
+    "verify:motion": "npm run verify:motion --workspace @aicore/web",
+    "check:secrets": "bash scripts/check-secrets.sh"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "better-sqlite3": "^13.0.3",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "@playwright/test": "^1.62.1",
+    "prettier": "^3.6.2"
   }
 }

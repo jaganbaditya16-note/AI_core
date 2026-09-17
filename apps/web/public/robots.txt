@@ -1,0 +1,7 @@
+# AICore — Phase 0
+#
+# No public content exists yet: the app exposes an internal overview page and a
+# system-health page. Crawling is disallowed until there is something public to
+# index, and this matches the `robots: { index: false }` metadata on the pages.
+User-agent: *
+Disallow: /

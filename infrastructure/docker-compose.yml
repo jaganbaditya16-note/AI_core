@@ -1,0 +1,74 @@
+# AICore — local development stack.
+#
+#   cp .env.example .env                     # then set POSTGRES_PASSWORD
+#   docker compose --env-file .env -f infrastructure/docker-compose.yml up --build
+#
+# Everything is driven by environment variables; no credential is hardcoded
+# anywhere in this file. POSTGRES_PASSWORD has no default on purpose — Compose
+# refuses to start without it.
+
+name: aicore
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aicore}
+      # No default: forces an explicit secret in .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-aicore}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - aicore-db-data:/var/lib/postgresql/data
+      # Runs once, on an empty volume: creates the `aicore` schema namespace only.
+      - ../database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aicore} -d ${POSTGRES_DB:-aicore}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      AICORE_ENVIRONMENT: ${AICORE_ENVIRONMENT:-development}
+      AICORE_LOG_LEVEL: ${AICORE_LOG_LEVEL:-info}
+      AICORE_DEBUG: ${AICORE_DEBUG:-false}
+      AICORE_DOCS_ENABLED: ${AICORE_DOCS_ENABLED:-true}
+      AICORE_CORS_ALLOW_ORIGINS: ${AICORE_CORS_ALLOW_ORIGINS:-}
+      # Assembled here from the POSTGRES_* variables — the only place the
+      # credential is combined into a connection URL.
+      AICORE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aicore}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-aicore}
+    ports:
+      - "${AICORE_API_PORT:-8000}:8000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    # NOTE: no `env_file` here, deliberately. Injecting the repository .env into
+    # the frontend container would hand database credentials to the web tier.
+    # The web tier talks to the API through the same-origin proxy and needs
+    # nothing but the API's internal address.
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      API_REQUEST_TIMEOUT_MS: ${API_REQUEST_TIMEOUT_MS:-4000}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.1.0}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  aicore-db-data:

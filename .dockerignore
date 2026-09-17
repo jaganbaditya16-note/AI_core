@@ -1,0 +1,41 @@
+# Files excluded from Docker build contexts.
+# Keep images limited to what the runtime needs — no dev tooling, no secrets.
+
+# Dependencies and build output
+**/node_modules
+**/.next
+**/out
+**/dist
+**/.venv
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# VCS / CI
+.git
+.github
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+
+# Development-agent tooling and docs (not part of the AICore runtime)
+.agents
+.claude
+.claude-flow
+.swarm
+.codex
+.mcp.json
+tools
+tools.lock.json
+docs
+tests
+playwright-report
+test-results
+TOOLKIT.md
+TOOLING-STATUS.md
+AGENTS.md
+CLAUDE.md

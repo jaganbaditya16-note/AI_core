@@ -94,7 +94,8 @@ Update: `bash scripts/install-tools.sh` (pulls and re-syncs), then commit the ve
 | CLI | `npx ruflo@latest …` (npm `ruflo@3.42.3`) |
 | Project scaffolding | `.claude/` (agents, commands, skills, helpers, settings.json), `.claude-flow/`, `.agents/skills/{ruflo,memory-management,swarm-orchestration}`, `.codex/` |
 | MCP server | `claude-flow` in `.mcp.json` — 353 tools, `CLAUDE_FLOW_MEMORY_BACKEND=sqlite` |
-| Baseline health | `npx ruflo@latest doctor` → 14 passed / 14 warnings (all warnings are optional packages) |
+| Baseline health | `npx ruflo@latest doctor` → 17 passed / 11 warnings in this repo (warnings are optional packages / no API keys) |
+| Verified | MCP `initialize` handshake returns `ruflo 3.0.0`; `tools/list` advertises 353 tools (e.g. `agent_spawn`, `agent_execute`, `swarm_*`, `memory_*`) |
 
 ```bash
 npx ruflo@latest doctor

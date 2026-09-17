@@ -49,7 +49,9 @@ interaction in Phase 0.
 
 ## Migrations (later phases)
 
-Alembic is a declared dev dependency. The intended layout is
-`database/migrations/` with `alembic.ini` at the repository root; the first
-revision must be introduced together with the first domain model. Until then,
-running Alembic is intentionally pointless — there is nothing to migrate.
+Alembic is **not** installed in Phase 0: there are no domain models, so there is
+nothing to migrate and no configuration to get wrong. When the first domain
+table arrives it will be added to `apps/api/pyproject.toml` as a dev dependency,
+with `alembic.ini` at the repository root and revisions under
+`database/migrations/`. The first revision must land together with that model —
+until then, running a migration tool would be meaningless.

@@ -40,12 +40,19 @@ fi
 bash "$ROOT/scripts/sync-skills.sh"
 
 # ── ruflo ─────────────────────────────────────────────────────────────────────
-if [ -d tools/ruflo/.git ]; then
-  log "ruflo source present — fetching updates"
-  git -C tools/ruflo fetch --depth 1 origin main && git -C tools/ruflo reset --hard origin/main
+# The runtime path is `npx ruflo@latest …`, so the ~131 MB source checkout is
+# opt-in (`--with-ruflo-source`) — it is only useful for reading ruflo's
+# internals or agent catalogs. Skipping it keeps the workspace snapshot small.
+if [ "${WITH_RUFLO_SOURCE:-0}" = "1" ] || [[ " ${*:-} " == *" --with-ruflo-source "* ]]; then
+  if [ -d tools/ruflo/.git ]; then
+    log "ruflo source present — fetching updates"
+    git -C tools/ruflo fetch --depth 1 origin main && git -C tools/ruflo reset --hard origin/main
+  else
+    log "cloning ruflo source"
+    git clone --single-branch --depth 1 https://github.com/ruvnet/ruflo.git tools/ruflo
+  fi
 else
-  log "cloning ruflo source"
-  git clone --single-branch --depth 1 https://github.com/ruvnet/ruflo.git tools/ruflo
+  log "ruflo source checkout skipped (runtime is npx ruflo@latest; pass --with-ruflo-source to clone)"
 fi
 
 # ── ruflo project scaffolding ─────────────────────────────────────────────────

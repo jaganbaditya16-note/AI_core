@@ -67,6 +67,12 @@ hdr "ruflo (claude-flow)"
 [ -d .claude/agents ] && ok ".claude/agents ($(find .claude/agents -maxdepth 1 -mindepth 1 -type d | wc -l) categories)" || meh ".claude/agents missing"
 [ -d .claude/skills ] && ok ".claude/skills ($(find .claude/skills -maxdepth 1 -mindepth 1 | wc -l) skills)" || meh ".claude/skills missing"
 [ -f .claude-flow/config.yaml ] && ok ".claude-flow/config.yaml" || meh ".claude-flow/config.yaml missing"
+if node -e "require('better-sqlite3')" >/dev/null 2>&1; then
+  ok "native better-sqlite3 binding builds + loads (needs npm_config_nodedir on this host)"
+else
+  meh "better-sqlite3 native binding unavailable — ruflo falls back to sql.js (WASM, in-memory)"
+fi
+meh "ruflo memory store/search CLI ABORTS on this host (4GB allocation) — not run by this script; use --minimal surface only"
 
 hdr "mcp servers (.mcp.json)"
 if [ -f .mcp.json ]; then
@@ -83,6 +89,12 @@ fi
 hdr "21st.dev"
 [ -f .21st/design.json ] && ok "design context .21st/design.json" || meh ".21st/design.json missing — run: npx @21st-dev/cli@latest init --design-context"
 [ -f .21st/DESIGN.md ]   && ok "design brief .21st/DESIGN.md"    || meh ".21st/DESIGN.md missing"
+code=$(timeout 20 curl -sS -o /dev/null -w '%{http_code}' https://21st.dev/api/mcp 2>/dev/null)
+if [ "$code" = "000" ] || [ -z "$code" ]; then
+  meh "egress to 21st.dev BLOCKED from this sandbox (TLS reset) — registry + MCP calls unusable here"
+else
+  ok "21st.dev reachable (HTTP $code)"
+fi
 if command -v npx >/dev/null 2>&1; then
   st=$(timeout 90 npx --yes @21st-dev/cli@latest whoami 2>&1 | tail -1)
   case "$st" in

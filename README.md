@@ -36,12 +36,15 @@ The dev server binds `0.0.0.0` with `allowedHosts: true` so it works behind a pr
 
 ## One-time steps / known limits
 
-- **21st.dev registry calls need a login:** `npx @21st-dev/cli@latest login` or `export API_KEY_21ST=…`
-  (key from <https://21st.dev/mcp>). Everything else works offline.
-- **No browser or Docker in this sandbox:** gstack's `/browse`, `/scrape`, `/qa` and `/cso` are
-  installed but inert until Chromium/Docker exist (`GSTACK_SKIP_PLAYWRIGHT=1`, `GSTACK_SKIP_CSO_BUILD=1`).
-- **3.9 GB RAM:** ruflo runs with the `sqlite` memory backend and `init --dual --minimal`; its
-  agentdb/vector paths abort. See [`TOOLKIT.md`](TOOLKIT.md#4-ruflo--agent-meta-harness-claude-flow-v3).
-- `node_modules` is not preserved across sandbox sessions — rerun `bash scripts/bootstrap.sh`.
+- **21st.dev is blocked from this sandbox** (TLS reset to `21st.dev`, login or not), so the registry
+  and its MCP server only work from your own machine — run `npx @21st-dev/cli@latest login` or set
+  `API_KEY_21ST` (see [`.env.example`](.env.example)) there. Local CLI features work here.
+- **No browser or Docker:** gstack's `/browse`, `/scrape`, `/qa`, `/pair-agent` and `/cso` are
+  installed (binaries built) but inert until Chromium/Docker exist.
+- **3.9 GB RAM:** ruflo is pinned to `init --dual --minimal` + `sqlite`. Full init and the
+  `memory store/search` CLI abort with a 4 GB allocation failure — don't retry them here.
+  See [`TOOLKIT.md`](TOOLKIT.md#4-ruflo--agent-meta-harness-claude-flow-v3).
+- `node_modules`, `~/.claude/skills` and `tools/` are not preserved across sandbox sessions —
+  rerun `bash scripts/bootstrap.sh --tools`. See [`TOOLING-STATUS.md`](TOOLING-STATUS.md).
 
 Details, commands, and troubleshooting: [`TOOLKIT.md`](TOOLKIT.md).

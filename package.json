@@ -8,7 +8,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:motion": "bun scripts/verify-motion.tsx"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

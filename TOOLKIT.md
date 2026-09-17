@@ -107,16 +107,30 @@ npx ruflo@latest mcp start              # MCP server over stdio
 npx ruflo@latest metaharness score
 ```
 
-**Known limitation (this sandbox).** `npx ruflo@latest init` without `--minimal`, and any
-`agentdb`/`hybrid` memory work, abort with `memory allocation of 4158883080 bytes failed` because
-the host has 3.9 GB RAM and no swap. Working path:
+**Known limitation (this sandbox).** The host has 3.9 GB RAM and no swap, and ruflo's memory
+substrate allocates ~4 GB. Two consequences, both verified:
+
+| Command | Result here |
+|---|---|
+| `npx ruflo@latest init --dual --minimal --no-skills-sh` | ✅ works — **this is the stable path** |
+| `npx ruflo@latest doctor` | ✅ 16 passed / 12 warnings |
+| `npx ruflo@latest swarm init --topology hierarchical` | ✅ works |
+| `npx ruflo@latest mcp start` (353 tools) | ✅ works |
+| `npx ruflo@latest init` (full) | ⛔ `memory allocation of 4158883080 bytes failed` |
+| `npx ruflo@latest memory store/search` | ⛔ same abort (even without `--vector`) |
+
+**Do not retry the full init or the memory CLI on this host** — it aborts every time with the same
+allocation failure. Memory tools are a large-machine feature; here, use the MCP layer from a host
+with ≥8 GB RAM, or `--full` + `--with-embeddings` there.
+
+The native `better-sqlite3` driver *does* build here, but only when node-gyp can find Node's C++
+headers locally (nodejs.org is unreachable):
 
 ```bash
-npx ruflo@latest init --dual --minimal --no-skills-sh
+export npm_config_nodedir=/usr/local/include/node   # scripts/bootstrap.sh does this automatically
 ```
 
-`swarm init`, `doctor`, hooks, and the MCP server all run fine. On a machine with ≥8 GB RAM,
-`--full` plus `--with-embeddings` is the richer setup.
+`npm config set nodedir …` is rejected by npm 10 — it has to be the environment variable.
 
 ---
 
@@ -138,8 +152,16 @@ export API_KEY_21ST=...               # from https://21st.dev/mcp  (also read as
 npx @21st-dev/cli@latest whoami
 ```
 
-Offline-safe commands: `init --design-context`, `init --client <name>`, `review`, `logo`.
-Authenticated: `search`, `get`, `generate`, `iterate`, `add`, `publish`, `bookmarks`, `lists`, `teams`.
+Offline-safe commands: `init --design-context`, `init --client <name> --write`, `review`.
+Authenticated + online: `search`, `get`, `generate`, `iterate`, `add`, `logo`, `publish`,
+`bookmarks`, `lists`, `teams`.
+
+**Sandbox egress (verified 2026-09-17).** `21st.dev` resolves in DNS but every TLS connection is
+reset from this sandbox — `https://21st.dev/api/mcp` returns `000`/`ECONNRESET`, and even the free
+no-login `logo` command fails with `fetch failed`. So in this Arena environment the 21st.dev
+registry and its MCP server are **unavailable regardless of login**; what works here is the CLI's
+local surface (design context, `review`, config generation). Run the registry commands from your own
+machine, where egress is not blocked.
 
 Note on naming: the request mentioned "21.dev". That domain belongs to the Bitcoin/Swift toolchain
 org (`21-DOT-DEV`, e.g. the P256K Swift package) and has nothing to do with React UI or this stack —

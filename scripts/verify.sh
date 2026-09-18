@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Phase 0 verification — one command that checks everything this phase claims.
+# Phase verification — one command that checks everything the built phases claim.
+#
+# Phase 0: applications, contract, infrastructure.
+# Phase 1: database foundation and tenant isolation (unit tests here; the live
+#          database section migrates from scratch and runs the integration suite).
 #
 #   bash scripts/verify.sh            # lint, types, tests, build, secrets, LICENSE
 #   bash scripts/verify.sh --full     # + PostgreSQL check and (if possible) E2E

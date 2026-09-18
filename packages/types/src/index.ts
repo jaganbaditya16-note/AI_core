@@ -46,15 +46,40 @@ export interface HealthReport {
   errors: string[];
 }
 
+/* ── Organizations (Phase 1) ─────────────────────────────────────────────── */
+
+/**
+ * Lifecycle of a tenant. The database constrains these values, so an unknown
+ * string coming from anywhere is a bug, not a new state.
+ */
+export type OrganizationStatus = "active" | "suspended" | "archived";
+
+/**
+ * A tenant: `GET /organizations/{id}`.
+ *
+ * Field names mirror the API exactly (snake_case), because this file is a
+ * mirror of the published contract rather than a client-side view model.
+ */
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  status: OrganizationStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Request body for `POST /organizations` (development and test environments only). */
+export interface OrganizationCreate {
+  name: string;
+  slug: string;
+}
+
 /* ── Errors ──────────────────────────────────────────────────────────────── */
 
 /** Machine-readable error codes returned by the API. */
 export type ApiErrorCode =
-  | "not_found"
-  | "method_not_allowed"
-  | "validation_error"
-  | "internal_error"
-  | `http_${number}`;
+  "not_found" | "method_not_allowed" | "validation_error" | "internal_error" | `http_${number}`;
 
 /** Error envelope returned for every non-2xx API response. */
 export interface ApiErrorResponse {

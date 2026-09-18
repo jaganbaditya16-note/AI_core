@@ -9,30 +9,43 @@ without requiring a running PostgreSQL.
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Iterator
 
 import pytest
 
 # ── Environment (must run before `aicore_api` is imported) ────────────────────
-# The credentials below are fake on purpose: they point at a closed port so
-# readiness fails deterministically, and they give test_health_ready.py a
-# credential-bearing URL to prove the readiness detail never leaks one.
-# No real password appears anywhere in this repository.
-os.environ.setdefault("AICORE_ENVIRONMENT", "test")
-os.environ.setdefault(
-    "AICORE_DATABASE_URL", "postgresql+psycopg://aicore:aicore@127.0.0.1:1/aicore"
-)
+#: Unreachable on purpose (port 1) — readiness must fail without a live database.
+#: The credentials in it are fake: they exist so test_health_ready.py has a
+#: credential-bearing URL to prove the readiness detail never leaks one. No real
+#: password appears anywhere in this repository.
+OFFLINE_DATABASE_URL = "postgresql+psycopg://aicore:aicore@127.0.0.1:1/aicore"
+
+# AICORE_DATABASE_URL is *assigned*, not defaulted, so the application under test
+# stays hermetic even when a developer has a live database exported. Integration
+# tests reach PostgreSQL through AICORE_TEST_DATABASE_URL instead.
+os.environ["AICORE_ENVIRONMENT"] = "test"
+os.environ["AICORE_DATABASE_URL"] = OFFLINE_DATABASE_URL
 os.environ.setdefault("AICORE_DATABASE_CONNECT_TIMEOUT_SECONDS", "1")
 os.environ.setdefault("AICORE_LOG_LEVEL", "warning")
 os.environ.setdefault("AICORE_DEBUG", "false")
 
-from fastapi.testclient import TestClient
 
-from aicore_api.config import Settings, get_settings
-from aicore_api.main import create_app
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import Engine, create_engine, text  # noqa: E402
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
-#: Unreachable on purpose (port 1) — readiness must fail without a live database.
-OFFLINE_DATABASE_URL = "postgresql+psycopg://aicore:aicore@127.0.0.1:1/aicore"
+from aicore_api.config import Settings, get_settings  # noqa: E402
+from aicore_api.db import tenancy  # noqa: E402
+from aicore_api.db.base import APP_SCHEMA  # noqa: E402
+from aicore_api.db.session import dispose_engine  # noqa: E402
+from aicore_api.main import create_app  # noqa: E402
+from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
+
+# The fixture table is registered with the isolation guard for the whole session,
+# so the guard treats it as tenant-owned exactly as it will a real resource table.
+tenancy.register_metadata(SampleBase.metadata)
 
 
 @pytest.fixture(scope="session")
@@ -56,3 +69,97 @@ def offline_settings() -> Settings:
         database_connect_timeout_seconds=1,
         environment="test",
     )
+
+
+# ── Phase 1: database and multi-tenancy fixtures ─────────────────────────────
+#
+# Integration tests run against a real PostgreSQL and are skipped unless
+# scripts/test-db.sh (or CI) exports AICORE_TEST_DATABASE_URL. Real PostgreSQL is
+# used deliberately: the things under test are foreign keys, check constraints,
+# unique constraints, Alembic migrations and UUID server defaults — SQLite would
+# verify none of them.
+
+TEST_DATABASE_URL_ENV = "AICORE_TEST_DATABASE_URL"
+
+
+@pytest.fixture(scope="session")
+def integration_engine() -> Iterator[Engine]:
+    """Engine for the migrated test database, or skip."""
+    url = os.environ.get(TEST_DATABASE_URL_ENV, "").strip()
+    if not url:
+        pytest.skip(
+            f"{TEST_DATABASE_URL_ENV} is not set — run `bash scripts/test-db.sh`, which starts "
+            "PostgreSQL, applies the migrations and runs these tests"
+        )
+
+    engine = create_engine(url, poolclass=StaticPool)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def integration_session(integration_engine: Engine) -> Iterator[Session]:
+    """A session whose work is rolled back after the test."""
+    factory = sessionmaker(bind=integration_engine, autoflush=False, expire_on_commit=False)
+    session = factory()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+
+
+@pytest.fixture(scope="session")
+def tenant_sample_table(integration_engine: Engine) -> Iterator[str]:
+    """Create the tenant-owned fixture table for the duration of the session.
+
+    Registering its metadata is what makes the isolation guard classify it as
+    tenant-owned — the same mechanism that will apply to real resource tables.
+    """
+    tenancy.register_metadata(SampleBase.metadata)
+    with integration_engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{APP_SCHEMA}"'))
+    TenantScopedSample.__table__.create(integration_engine, checkfirst=True)
+    try:
+        yield TenantScopedSample.__tablename__
+    finally:
+        TenantScopedSample.__table__.drop(integration_engine, checkfirst=True)
+
+
+@pytest.fixture
+def database_client(
+    monkeypatch: pytest.MonkeyPatch, integration_engine: Engine
+) -> Iterator[TestClient]:
+    """An application whose database is the migrated test database.
+
+    The session-scoped ``client`` fixture is deliberately hermetic (it points at a
+    closed port), so tests that need real persistence use this one. The database
+    URL is injected through the environment because that is how the application
+    reads it — the DB layer resolves its settings from ``get_settings()``, not from
+    the settings object passed to ``create_app``. Caches are cleared on the way in
+    and on the way out so the rest of the suite stays hermetic.
+    """
+    monkeypatch.setenv("AICORE_DATABASE_URL", os.environ[TEST_DATABASE_URL_ENV])
+    get_settings.cache_clear()
+    dispose_engine()
+    try:
+        app = create_app()
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            yield test_client
+    finally:
+        dispose_engine()
+        get_settings.cache_clear()
+
+
+@pytest.fixture
+def two_organizations(integration_session: Session) -> tuple[uuid.UUID, uuid.UUID]:
+    """Two tenants, so cross-tenant behaviour is testable."""
+    from aicore_api.db.repositories.organizations import OrganizationRepository
+
+    repository = OrganizationRepository(integration_session)
+    suffix = uuid.uuid4().hex[:8]
+    first = repository.create(name="Acme Corporation", slug=f"acme-{suffix}")
+    second = repository.create(name="Globex Corporation", slug=f"globex-{suffix}")
+    return first.id, second.id

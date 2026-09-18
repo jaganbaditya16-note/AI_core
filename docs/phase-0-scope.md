@@ -1,5 +1,11 @@
 # Phase 0 scope
 
+> **Status:** this document is the contract Phase 0 was built against and is kept
+> as the record of that phase. Phase 1 has since added what it reserved: the
+> tenant root, the multi-tenancy conventions and the Alembic migrations. See
+> [database.md](database.md) for the current state; authentication, RBAC and the
+> remaining domain tables are still not implemented.
+
 Phase 0 builds the **foundation** of AICore. This document is the contract for
 what is and is not in the repository at this point.
 

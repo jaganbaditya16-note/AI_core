@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "alembic>=1.13",     # database/migrations — schema is applied from the repository, not the API image
   "pytest>=8",
   "httpx>=0.27",
   "ruff>=0.6",
@@ -53,8 +54,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests legitimately use asserts and example credentials.
-"tests/*" = ["S101", "S105", "S106"]
+# Tests legitimately use asserts and example credentials, and they build SQL from
+# module-level constants (table/schema names) while binding every value as a
+# parameter — S608 targets user-derived interpolation, which does not occur here.
+"tests/*" = ["S101", "S105", "S106", "S608"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["aicore_api"]

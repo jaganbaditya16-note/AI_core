@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Start a real PostgreSQL, point the API at it, and prove readiness succeeds.
+# Verify the database foundation against a real PostgreSQL.
 #
-# Used to verify the database foundation without Docker (some sandboxes have no
-# Docker). Uses the `pgserver` dev dependency, which ships real PostgreSQL
-# binaries, and psycopg (already an API dependency) for provisioning.
+# Starts PostgreSQL (via the `pgserver` dev dependency, which ships real binaries),
+# provisions the application role and database, applies the Alembic migrations,
+# proves `/health/ready` reports healthy, and runs the integration tests — the
+# tenant-isolation and constraint tests that only a real database can verify.
 #
 #   bash scripts/test-db.sh
 set -euo pipefail
@@ -23,6 +24,12 @@ fi
 if ! "$PY" -c "import pgserver" >/dev/null 2>&1; then
   echo "[test-db] installing pgserver (bundled PostgreSQL binaries)" >&2
   "$PY" -m pip install --quiet pgserver
+fi
+
+# A fresh venv needs the dev extras (alembic, pgserver, pytest) declared in pyproject.
+if ! "$PY" -c "import alembic, pgserver" >/dev/null 2>&1; then
+  echo "[test-db] installing API dev extras (alembic, pgserver)"
+  "$PY" -m pip install --quiet -e "$ROOT/apps/api[dev]"
 fi
 
 echo "[test-db] starting PostgreSQL (data directory: $PGDATA)"
@@ -91,7 +98,125 @@ try:
         sys.exit("[test-db] FAILED: readiness did not report ok against a live database")
 
     dispose_engine()
-    print("[test-db] PASS: PostgreSQL reachable, readiness reports ok")
+
+    # ── Apply the schema the way production will ─────────────────────────────
+    import subprocess
+
+    root = os.environ["AICORE_REPO_ROOT"]
+    child_env = {
+        **os.environ,
+        "PYTHONPATH": os.path.join(root, "apps", "api", "src"),
+        # Integration tests connect to the same server, through the same URL.
+        "AICORE_TEST_DATABASE_URL": os.environ["AICORE_DATABASE_URL"],
+    }
+
+    alembic_ini = os.path.join(root, "alembic.ini")
+
+    def alembic(*args: str, env: dict[str, str]) -> None:
+        """Run a migration step in a child process, failing the script on error."""
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "-c", alembic_ini, *args],
+            cwd=root,
+            env=env,
+            check=False,
+        )
+        if result.returncode != 0:
+            sys.exit(f"[test-db] FAILED: alembic {' '.join(args)} did not run cleanly")
+
+    def app_tables(dsn: str) -> list[str]:
+        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'aicore' ORDER BY table_name"
+            )
+            return [row[0] for row in cur.fetchall()]
+
+    print("[test-db] applying migrations (alembic upgrade head)")
+    alembic("upgrade", "head", env=child_env)
+
+    # Inspect the *application* database (server.get_uri() points at the
+    # maintenance database, where the migrations never ran).
+    app_dsn = f"postgresql:///aicore?host={pgdata}&user=aicore"
+    with psycopg.connect(app_dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'aicore' ORDER BY table_name"
+        )
+        tables = [row[0] for row in cur.fetchall()]
+        cur.execute(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = 'aicore' AND table_name = 'organizations' ORDER BY ordinal_position"
+        )
+        columns = cur.fetchall()
+    print(f"[test-db] schema after migration: {tables}")
+    print(f"[test-db] aicore.organizations columns: {[name for name, _ in columns]}")
+    if "organizations" not in tables or "alembic_version" not in tables:
+        sys.exit("[test-db] FAILED: the organizations table or version table is missing")
+
+    # ── The models and the migration must describe the same schema ───────────
+    print("[test-db] checking for schema drift (alembic check)")
+    drift = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", os.path.join(root, "alembic.ini"), "check"],
+        cwd=root,
+        env=child_env,
+        check=False,
+    )
+    if drift.returncode != 0:
+        sys.exit("[test-db] FAILED: the models and the migrations disagree")
+
+    # ── Both directions of the migration must actually run ───────────────────
+    # A downgrade path nobody has executed is a claim, not a fact. The round trip
+    # runs in a scratch database, so the application's own data is untouched.
+    print("[test-db] checking the migration round trip (upgrade → downgrade → upgrade)")
+    scratch = "aicore_migration_roundtrip"
+    scratch_dsn = f"postgresql:///{scratch}?host={pgdata}&user=aicore"
+    scratch_env = {**child_env, "AICORE_DATABASE_URL": scratch_dsn.replace("postgresql://", "postgresql+psycopg://", 1)}
+
+    with psycopg.connect(server.get_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP DATABASE IF EXISTS {scratch} WITH (FORCE)")
+        cur.execute(f"CREATE DATABASE {scratch} OWNER aicore")
+
+    alembic("upgrade", "head", env=scratch_env)
+    applied = app_tables(scratch_dsn)
+    alembic("downgrade", "base", env=scratch_env)
+    reversed_tables = app_tables(scratch_dsn)
+    alembic("upgrade", "head", env=scratch_env)
+    reapplied = app_tables(scratch_dsn)
+
+    with psycopg.connect(server.get_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP DATABASE {scratch}")
+
+    print(f"[test-db]   upgrade:   {applied}")
+    print(f"[test-db]   downgrade: {reversed_tables}")
+    print(f"[test-db]   upgrade:   {reapplied}")
+    if "organizations" not in applied or "organizations" in reversed_tables:
+        sys.exit("[test-db] FAILED: the migration does not reverse cleanly")
+    if "organizations" not in reapplied:
+        sys.exit("[test-db] FAILED: the re-applied migration did not recreate the schema")
+
+    # ── The tests that need a real database ──────────────────────────────────
+    print("[test-db] running the test suite against the live database")
+    tested = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            os.path.join(root, "apps", "api", "pyproject.toml"),
+            os.path.join(root, "apps", "api", "tests"),
+            "-q",
+        ],
+        cwd=root,
+        env=child_env,
+        check=False,
+    )
+    if tested.returncode != 0:
+        sys.exit("[test-db] FAILED: the test suite did not pass against a live database")
+
+    print(
+        "[test-db] PASS: migrations applied and reversible, schema correct, "
+        "readiness ok, tests pass"
+    )
 finally:
     server.cleanup()
     print("[test-db] server stopped")

@@ -16,6 +16,8 @@ SHARED_TYPES = REPO_ROOT / "packages" / "types" / "src" / "index.ts"
 
 EXPECTED_HEALTH_FIELDS = {"status", "service", "version", "environment"}
 EXPECTED_READINESS_FIELDS = {"status", "checks"}
+EXPECTED_ORGANIZATION_FIELDS = {"id", "name", "slug", "status", "created_at", "updated_at"}
+EXPECTED_ORGANIZATION_CREATE_FIELDS = {"name", "slug"}
 
 
 def test_openapi_document_is_served(client: TestClient) -> None:
@@ -35,6 +37,14 @@ def test_health_schema_fields(client: TestClient) -> None:
     assert set(schemas["ReadinessResponse"]["properties"]) == EXPECTED_READINESS_FIELDS
 
 
+def test_organization_schema_fields(client: TestClient) -> None:
+    """The tenant contract is published, so it is mirrored too."""
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    assert set(schemas["OrganizationRead"]["properties"]) == EXPECTED_ORGANIZATION_FIELDS
+    assert set(schemas["OrganizationCreate"]["properties"]) == EXPECTED_ORGANIZATION_CREATE_FIELDS
+
+
 def test_readiness_documents_the_503_response(client: TestClient) -> None:
     ready = client.get("/openapi.json").json()["paths"]["/health/ready"]["get"]["responses"]
 
@@ -46,7 +56,13 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
     source = SHARED_TYPES.read_text(encoding="utf-8")
 
     report_fields = {"reachable", "checkedAt", "errors"}
-    for field in sorted(EXPECTED_HEALTH_FIELDS | EXPECTED_READINESS_FIELDS | report_fields):
+    mirrored = (
+        EXPECTED_HEALTH_FIELDS
+        | EXPECTED_READINESS_FIELDS
+        | EXPECTED_ORGANIZATION_FIELDS
+        | report_fields
+    )
+    for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
 
     # Guard against a domain model creeping into the Phase 0 contract.

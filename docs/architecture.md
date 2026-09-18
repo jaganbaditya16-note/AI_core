@@ -16,6 +16,29 @@ That is why Phase 0 establishes a plain, testable service boundary rather than
 coupling anything to a model provider — there is no model integration in this
 phase at all.
 
+## What Phase 1 adds
+
+The multi-tenancy foundation: one table (`aicore.organizations`) and the
+conventions every future table inherits, so the tenant boundary exists before
+there is anything to leak. Design and rationale live in
+[database.md](database.md); the short version:
+
+```
+organizations (the tenant root)
+      ▲
+      │ organization_id NOT NULL, ON DELETE RESTRICT
+      │
+  every tenant-owned table (agents, models, tools, policies, events, … in later phases)
+```
+
+Three rules make the boundary hard to bypass accidentally: ownership is declared
+by inheritance rather than listed anywhere; an engine-level guard refuses any
+statement that touches a tenant-owned table without a bound tenant *or* without
+an `organization_id` filter; and the repository base class fails closed when no
+tenant is resolved. Phase 1 deliberately does **not** enable Row Level Security —
+it prepares for it (see the design note in `database.md`) rather than adding a
+policy that is not yet enforceable.
+
 ## What Phase 0 actually is
 
 A foundation: an application skeleton, a versioned API contract, a database
@@ -39,8 +62,9 @@ the explicit list.
              │ browser (never talks to the API host)    ▼
              │                                  ┌───────────────┐
         ┌────┴─────┐                            │  PostgreSQL   │
-        │ Browser  │                            │  (no domain   │
-        └──────────┘                            │   tables yet) │
+        │ Browser  │                            │  organizations│
+        └──────────┘                            │  + tenant     │
+                                                │  boundary     │
                                                 └───────────────┘
 ```
 

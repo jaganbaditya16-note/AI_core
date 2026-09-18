@@ -1,6 +1,8 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently in **Phase 0: foundation only**.
+**Enterprise AI Control Plane** — currently at **Phase 1: database and
+multi-tenancy foundation**. Phase 0 delivered the skeleton; Phase 1 adds the
+PostgreSQL schema conventions and the tenant boundary.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -28,8 +30,8 @@ Model/Tool inventory  Approval · Kill switch   Audit · Incidents
 
 **Core principle:** the model reasons, explains and recommends. **Deterministic
 AICore services make the authorization, policy and security decisions.** The LLM
-is never the final security authority — which is why Phase 0 couples nothing to
-a model provider.
+is never the final security authority — which is why the foundation couples
+nothing to a model provider.
 
 ## Technology stack (locked)
 
@@ -55,16 +57,17 @@ apps/
     src/components/     health panel, motion wrapper
   api/                  FastAPI backend
     src/aicore_api/     main · config · api · core · db · schemas
-    tests/              Pytest suite (25 tests)
+    tests/              Pytest suite (unit + PostgreSQL integration)
 packages/
   types/                shared API contract types (health, errors)
 database/
   init/                 one-time bootstrap SQL (schema namespace only)
-  migrations/           reserved for Alembic (no migrations yet)
+  migrations/           Alembic environment and revisions
+    versions/0001_organizations.py
 tests/e2e/              Playwright smoke tests
 docs/                   architecture, scope, development guide, ADRs
 infrastructure/         docker-compose.yml
-scripts/                dev-db, dev-api, py, test-db, verify, check-secrets
+scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
 
 ## Local setup
@@ -155,8 +158,9 @@ carries `X-Request-ID`.
 
 - **No authentication or authorization** — by design; there are no protected
   routes to protect. Nothing is faked either.
-- **No domain tables and no migrations.** The database contains a schema
-  namespace and nothing else.
+- **No domain tables beyond the tenant root.** The database contains
+  `aicore.organizations` and nothing else; the agent, model, tool, policy, event
+  and incident tables arrive in later phases, through migrations.
 - **No AI features.** No model provider is integrated; no agent/model/tool
   inventory, policy engine, firewall, audit, monitoring or incidents.
 - **Local verification caveats:** this sandbox has no Docker and blocks
@@ -164,9 +168,34 @@ carries `X-Request-ID`.
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
 
+## What Phase 1 adds
+
+One table and the boundary every later table inherits:
+
+- **`aicore.organizations`** — the tenant root: UUID key, unique slug, lifecycle
+  status, timestamps, all enforced by database constraints.
+- **Tenant-owned conventions** — future tables inherit a UUID key, timestamps and
+  a non-null `organization_id` foreign key (`ON DELETE RESTRICT`), so a table
+  cannot be added without a tenant boundary.
+- **An isolation guard** — every statement touching a tenant-owned table is
+  refused unless a tenant is bound *and* the statement filters on
+  `organization_id`. Tenant context is explicit and request-scoped; there is no
+  default tenant to fall back on.
+- **Alembic migrations** — a dev dependency, with `bash scripts/migrate.sh`,
+  a drift check (`alembic check`) and a proven downgrade path.
+
+Two deliberately narrow exceptions exist so the foundation can be verified: a
+minimal `POST /organizations` + `GET /organizations/{id}` persistence path that
+answers only in `development` and `test` (it returns 404 elsewhere, and there is
+no organization-management API), and a test-only tenant-owned table.
+
+Design and rationale: [docs/database.md](docs/database.md).
+
 ## Future phases (high level)
 
-1. Identity, tenants, RBAC — first domain tables and migrations.
+1. ~~Identity, tenants~~ — **tenants landed in Phase 1**; identity and RBAC
+   remain (Phase 1 deliberately ships no authentication, so the tenant boundary
+   is currently enforced by the data layer, not by a user identity).
 2. Discovery and inventory: agents, models, tools, dependencies, shadow AI.
 3. Control: permissions, policy engine, action firewall, approvals, kill switch.
 4. Monitoring: behaviour, anomalies, cost, audit, incidents.

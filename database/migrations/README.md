@@ -1,25 +1,23 @@
 # Migrations
 
-Reserved for Alembic revisions.
+Alembic revisions for the AICore schema.
 
-Phase 0 ships **no migrations** because it ships no domain tables. The first
-migration will be added in the phase that introduces the first domain model, and
-it must be reviewable: one concern per revision, with an explicit downgrade.
-
-Planned layout (not yet active):
+Layout:
 
 ```
-alembic.ini                  # repository root, points at database/migrations
+alembic.ini                  # repository root, no database URL in it
 database/migrations/
-  env.py
+  env.py                     # reads AICORE_DATABASE_URL via the app's settings
   script.py.mako
   versions/
-    0001_<first_domain_change>.py
+    0001_organizations.py    # Phase 1: aicore schema + tenant root
 ```
 
 Rules for that work:
 
 - Migrations are reviewed like code; no `--autogenerate` output committed unreviewed.
+- Run `bash scripts/migrate.sh check` after editing a model: it fails when the
+  models and the migrated schema disagree (including constraint *names*).
 - Every migration states its downgrade path, or documents why it is irreversible.
 - Schema changes and model changes land in the same pull request.
 - Credentials come from `AICORE_DATABASE_URL`; they are never written into

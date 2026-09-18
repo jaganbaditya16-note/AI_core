@@ -26,9 +26,11 @@ logger = logging.getLogger(__name__)
 DESCRIPTION = """
 AICore is an enterprise AI control plane.
 
-**Phase 0 scope:** this API currently exposes only health endpoints. Inventory,
-identity, policy, firewall, audit and intelligence features are not implemented
-and are not part of this build.
+**Phase 1 scope:** health endpoints, plus the PostgreSQL multi-tenancy foundation
+(organizations and tenant-scoped data access). Inventory, identity, policy,
+firewall, audit and intelligence features are still not implemented: there is no
+authentication, and the organization routes exist only in development and test
+environments.
 """
 
 
@@ -66,7 +68,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {
                 "name": "health",
                 "description": "Liveness and readiness probes for orchestrators and monitoring.",
-            }
+            },
+            {
+                "name": "organizations",
+                "description": (
+                    "Tenant persistence, exposed in development and test environments only. "
+                    "Authorization arrives with identity in a later phase."
+                ),
+            },
         ],
     )
     app.state.settings = resolved

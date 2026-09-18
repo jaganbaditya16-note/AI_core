@@ -13,8 +13,14 @@ from functools import lru_cache
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from aicore_api.config import get_settings
+
+# Importing the isolation guard registers it on every connection in this process.
+# It is imported here (rather than in main.py) so that any code path that opens a
+# session — API, migration, script, test — is covered by the same rule.
+from aicore_api.db import tenancy  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +33,9 @@ _MAX_DETAIL_LENGTH = 300
 def get_engine() -> Engine:
     """Create the shared engine. Never logs the connection string."""
     settings = get_settings()
+    # No search_path is set on purpose: every table is declared in the ``aicore``
+    # schema, so SQLAlchemy emits fully qualified names. Unqualified resolution
+    # would be one more thing a connection could get wrong.
     return create_engine(
         settings.database_url.get_secret_value(),
         pool_pre_ping=True,
@@ -37,10 +46,22 @@ def get_engine() -> Engine:
     )
 
 
+@lru_cache(maxsize=1)
+def get_session_factory() -> sessionmaker[Session]:
+    """Session factory bound to the shared engine.
+
+    Sessions are created per unit of work (a request, a script, a test) and never
+    shared between tenants: the tenant binding lives in the context, and the
+    engine-level guard refuses unscoped statements regardless of the session.
+    """
+    return sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
+
+
 def dispose_engine() -> None:
     """Close pooled connections (called on application shutdown)."""
     if get_engine.cache_info().currsize == 0:
         return
+    get_session_factory.cache_clear()
     get_engine().dispose()
     get_engine.cache_clear()
 

@@ -57,12 +57,20 @@ npm run build                 # production build
 npm run verify:motion         # framer-motion runtime check (headless)
 npm run lint:api              # Ruff
 npm run typecheck:api         # Mypy (strict)
-npm run test:api              # Pytest (25 tests)
+npm run test:api              # Pytest (unit; integration tests skip without a database)
 npm run test:e2e              # Playwright (needs: npx playwright install chromium)
 npm run check:secrets         # secret scan
 npm run verify                # everything above that does not need Docker/browser
 bash scripts/verify.sh --full # + live PostgreSQL + E2E where available
-bash scripts/test-db.sh       # real PostgreSQL: provision, probe, assert 200
+bash scripts/test-db.sh       # real PostgreSQL: migrate from scratch, drift check,
+                              # readiness probe, full test suite
+
+# Database migrations (Alembic)
+bash scripts/migrate.sh upgrade head      # apply migrations
+bash scripts/migrate.sh current           # applied revision
+bash scripts/migrate.sh check             # fail if models and the schema disagree
+bash scripts/migrate.sh downgrade -1      # reverse one revision
+bash scripts/migrate.sh revision --autogenerate -m "add x"   # author one (review it)
 ```
 
 ## Configuration

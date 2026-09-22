@@ -160,9 +160,33 @@ export interface RoleListResponse {
   roles: Role[];
 }
 
-/** One capability the application knows how to check. */
+/**
+ * The resource half of a permission identifier: what a capability governs.
+ *
+ * A closed vocabulary that mirrors `aicore_api.core.permissions.Resource`, and
+ * deliberately small: a resource appears here only once a permission guards it.
+ */
+export type PermissionResource =
+  "organization" | "user" | "role" | "audit" | "security" | "asset" | "agent";
+
+/**
+ * The action half of a permission identifier: what may be done.
+ *
+ * There is no `execute`, `approve` or `block`: those are runtime control-plane
+ * actions, and this build can perform none of them.
+ */
+export type PermissionAction = "read" | "create" | "update" | "delete" | "manage";
+
+/**
+ * One capability the application knows how to check.
+ *
+ * `code` is the identifier (`agent.update`); `resource` and `action` are its two
+ * halves, so a client can group capabilities without parsing the string itself.
+ */
 export interface Permission {
   code: string;
+  resource: PermissionResource;
+  action: PermissionAction;
   description: string;
 }
 

@@ -39,6 +39,7 @@ from typing import Annotated, Any, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aicore_api.api.ownership import resolve_owner_membership
+from aicore_api.api.scope import require_instance_scope
 from aicore_api.auth.authorization import OrganizationContext
 from aicore_api.auth.dependencies import SessionDep, require_permission
 from aicore_api.core.agents import (
@@ -377,6 +378,9 @@ def read_agent_by_identity(
     agent = AgentRepository(session, context.organization_id).find_by_identity(identity_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_IDENTITY_NOT_FOUND)
+    require_instance_scope(
+        context, agent, permission=Permission.AGENT_READ, detail=_IDENTITY_NOT_FOUND
+    )
     return _agent_read(agent)
 
 
@@ -391,6 +395,9 @@ def read_agent(agent_id: uuid.UUID, context: ReadAgents, session: SessionDep) ->
     agent = AgentRepository(session, context.organization_id).find(agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_AGENT_NOT_FOUND)
+    require_instance_scope(
+        context, agent, permission=Permission.AGENT_READ, detail=_AGENT_NOT_FOUND
+    )
     return _agent_read(agent)
 
 
@@ -433,6 +440,9 @@ def update_agent(
     agent = repository.find(agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_AGENT_NOT_FOUND)
+    require_instance_scope(
+        context, agent, permission=Permission.AGENT_UPDATE, detail=_AGENT_NOT_FOUND
+    )
 
     identity_metadata = _validated_identity_metadata(payload.identity_metadata)
     owner_membership_id = (
@@ -498,6 +508,9 @@ def delete_agent(agent_id: uuid.UUID, context: DeleteAgents, session: SessionDep
     agent = repository.find(agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_AGENT_NOT_FOUND)
+    require_instance_scope(
+        context, agent, permission=Permission.AGENT_DELETE, detail=_AGENT_NOT_FOUND
+    )
     emit_event(
         DomainEvent(
             name=AGENT_DELETED,

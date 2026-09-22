@@ -36,6 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from aicore_api.api.ownership import resolve_owner_membership
+from aicore_api.api.scope import require_instance_scope
 from aicore_api.auth.authorization import OrganizationContext
 from aicore_api.auth.dependencies import SessionDep, require_permission
 from aicore_api.core.assets import (
@@ -379,6 +380,11 @@ def read_asset(asset_id: uuid.UUID, context: ReadAssets, session: SessionDep) ->
     asset = AssetRepository(session, context.organization_id).find(asset_id)
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ASSET_NOT_FOUND)
+    # The row is authorized as well as loaded: `asset.read` *for this row*, in this
+    # organization. See aicore_api.api.scope.
+    require_instance_scope(
+        context, asset, permission=Permission.ASSET_READ, detail=_ASSET_NOT_FOUND
+    )
     return _asset_read(asset)
 
 
@@ -409,6 +415,9 @@ def update_asset(
     asset = repository.find(asset_id)
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ASSET_NOT_FOUND)
+    require_instance_scope(
+        context, asset, permission=Permission.ASSET_UPDATE, detail=_ASSET_NOT_FOUND
+    )
 
     fields = payload.model_fields_set
     metadata = (
@@ -483,6 +492,9 @@ def delete_asset(asset_id: uuid.UUID, context: DeleteAssets, session: SessionDep
     asset = repository.find(asset_id)
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ASSET_NOT_FOUND)
+    require_instance_scope(
+        context, asset, permission=Permission.ASSET_DELETE, detail=_ASSET_NOT_FOUND
+    )
     emit_event(
         DomainEvent(
             name=ASSET_DELETED,

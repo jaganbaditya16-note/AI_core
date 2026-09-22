@@ -145,6 +145,20 @@ Role codes and permission codes are validated with a CHECK constraint as well as
 in the model, so a malformed code cannot be introduced by a hand-written
 `INSERT` either. Full design: [authentication.md](authentication.md).
 
+**Phase 5 reviewed these tables and changed nothing.** The requirements that phase
+had to meet were already met in the schema: `uq_permissions_code` and
+`uq_roles_code` (uniqueness), `ck_permissions_code_format` /
+`ck_roles_code_format` (a code is dotted lowercase), the `role_permissions`
+primary key `(role_id, permission_id)` (a grant cannot repeat), and foreign keys
+whose deletion behaviour is deliberate — a role's grants cascade away with it,
+while deleting a permission that is still granted, or a role a membership still
+uses, is refused. Tenant correctness needs no column: the catalogue is
+installation-wide reference data, and *which role a member holds* is the
+tenant-owned row in `memberships`. So there is no Phase 5 migration, and the
+schema head remains `0004_agents`; a redundant constraint would have been a claim
+this phase could not justify. The seeded catalogue stays at 16 permissions, 6
+roles and 52 grants.
+
 ## The asset inventory table (Phase 3)
 
 One table for all seven asset types — the reasoning is in

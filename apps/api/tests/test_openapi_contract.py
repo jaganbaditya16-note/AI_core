@@ -31,7 +31,7 @@ EXPECTED_IDENTITY_SCHEMAS = {
     "MemberListResponse": {"organization_id", "members"},
     "RoleRead": {"code", "name", "description", "permissions"},
     "RoleListResponse": {"organization_id", "roles"},
-    "PermissionRead": {"code", "description"},
+    "PermissionRead": {"code", "resource", "action", "description"},
     "PermissionListResponse": {"organization_id", "permissions"},
 }
 
@@ -256,6 +256,36 @@ def test_the_agent_vocabularies_are_published(client: TestClient) -> None:
     assert set(schemas["AssetStatus"]["enum"]) == {"draft", "active", "suspended", "retired"}
 
 
+def test_the_permission_vocabulary_is_published(client: TestClient) -> None:
+    """A client reads `resource` and `action` as closed vocabularies, not as strings.
+
+    Phase 5 published the two halves of a permission identifier; this asserts the
+    document a client actually receives, including the negative half — no action
+    this build cannot perform may appear in the vocabulary.
+    """
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    assert set(schemas["Resource"]["enum"]) == {
+        "organization",
+        "user",
+        "role",
+        "audit",
+        "security",
+        "asset",
+        "agent",
+    }
+    assert set(schemas["Action"]["enum"]) == {"read", "create", "update", "delete", "manage"}
+
+    # The document must not advertise a capability the build does not have.
+    forbidden = {"execute", "approve", "kill", "block", "intercept", "control", "firewall"}
+    assert not forbidden & set(schemas["Action"]["enum"])
+    assert not forbidden & set(schemas["Resource"]["enum"])
+
+    properties = schemas["PermissionRead"]["properties"]
+    assert properties["resource"] == {"$ref": "#/components/schemas/Resource"}
+    assert properties["action"] == {"$ref": "#/components/schemas/Action"}
+
+
 def test_the_asset_vocabularies_are_published(client: TestClient) -> None:
     """A client can read the closed vocabularies from the document, not from prose."""
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
@@ -365,6 +395,8 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "DiscoveryState",
         "RiskClassification",
         "AgentCategory",
+        "PermissionResource",
+        "PermissionAction",
     ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
     for value in (
@@ -375,6 +407,8 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "unassessed",
         "customer_support",
         "autonomous",
+        "manage",
+        "security",
     ):
         assert f'"{value}"' in source, f"packages/types is missing the literal {value!r}"
 

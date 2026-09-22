@@ -29,9 +29,10 @@ what is and is not in the repository at this point.
 This list describes the Phase 0 baseline. Phase 1 has since added tenants
 ([database.md](database.md)), Phase 2 identity and authorization
 ([authentication.md](authentication.md)), Phase 3 the AI asset inventory
-([inventory.md](inventory.md)) and Phase 4 the agent registry
-([agents.md](agents.md)) — the entries below that those phases cover say what
-Phase 0 did not build, and the rest are still absent.
+([inventory.md](inventory.md)), Phase 4 the agent registry
+([agents.md](agents.md)) and Phase 5 the permission model and authorization
+foundation ([authorization.md](authorization.md)) — the entries below that those
+phases cover say what Phase 0 did not build, and the rest are still absent.
 
 Nothing below existed in Phase 0, not even as a stub. Anything that looked like a
 fake version of these would be worse than nothing, because it would misrepresent
@@ -49,7 +50,11 @@ with an identity; model and tool *registries*, the dependency graph, automatic
 discovery and supply-chain analysis are still absent.)
 
 **Control:** permissions, policy engine, policy-as-code, action firewall,
-approval workflows, kill switch, MCP firewall, model routing.
+approval workflows, kill switch, MCP firewall, model routing. (Phase 2 built
+explicit permissions and role-based grants and Phase 5 the resource/action
+vocabulary and the deterministic authorization decision; there is still no policy
+language, no rule store, no interception, no approval and no kill switch — nothing
+in this build can stop an action, only record it.)
 
 **Monitoring & response:** monitoring, audit system, anomaly detection, risk
 engine, incident management, cost engine, metric dashboards.

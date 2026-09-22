@@ -12,6 +12,27 @@ Two rules shape this module:
    against it (``tests/test_authorization.py``), so the catalog in code and the
    catalog in PostgreSQL cannot drift apart.
 
+Phase 5 makes the *shape* of a permission explicit. A permission identifier is
+``resource.action`` — :class:`Permission` → :class:`Resource` + :class:`Action` —
+and both halves are closed vocabularies declared here:
+
+    identity → resource → action → permission → authorization decision
+
+:func:`parse_permission_code` is the only door into that vocabulary, and it
+refuses anything that is not a declared ``resource.action`` pair, so a typo or an
+invented code cannot travel through the system as an authorization requirement.
+The three vocabularies are cross-checked by tests
+(``tests/test_permissions.py``): every catalog code parses, every resource and
+action is used by at least one permission, and no code exists outside them.
+
+Two resources the phase description names have no namespace of their own, and
+that is deliberate: **membership** is governed by ``user.read`` / ``user.manage``
+(Phase 2 chose those codes for the member directory and the membership lifecycle)
+and the **permission catalog** is read through ``role.read`` (a permission only
+means something as part of a role). Renaming a permission code is a migration —
+codes are stored in the database, published by the API and asserted by tests — so
+Phase 5 documents the mapping instead of churning it.
+
 Scope discipline: the permissions below are exactly those the application can
 enforce today — the Phase 2 foundation (organization, membership, role and
 read-only oversight), the Phase 3 AI asset inventory, and the Phase 4 agent
@@ -31,15 +52,109 @@ from enum import StrEnum
 from types import MappingProxyType
 
 __all__ = [
+    "RESOURCE_ACTIONS",
     "ROLE_INTENTS",
     "ROLE_PERMISSIONS",
+    "Action",
     "Permission",
+    "Resource",
     "RoleCode",
+    "UnknownPermissionError",
     "all_permissions",
+    "parse_permission_code",
     "permissions_for",
+    "permissions_for_resource",
     "role_holds",
     "sort_permissions",
 ]
+
+
+#: The shape a permission code must have. Identical to the ``CHECK`` constraint on
+#: ``aicore.permissions.code`` (asserted equal to the model's pattern by
+#: ``tests/test_permissions.py``), so the vocabulary and the database agree on what
+#: a code *is* rather than only on which codes exist.
+PERMISSION_CODE_PATTERN = r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$"
+
+#: Every code in this build has exactly two segments (``resource.action``). Kept
+#: separate from the pattern above because the database is more permissive on
+#: purpose: a future phase may introduce a three-segment code in a reviewed
+#: migration, while *this* build must not silently accept one it cannot classify.
+PERMISSION_CODE_SEGMENTS = 2
+
+
+class UnknownPermissionError(ValueError):
+    """A string that is not a permission this build knows.
+
+    A ``ValueError`` so that callers which already treat catalog mistakes as
+    value errors keep working, and a distinct class so that "this code is not in
+    the vocabulary" cannot be confused with "this role is unknown".
+    """
+
+
+class Resource(StrEnum):
+    """The resource half of a permission: what the capability governs.
+
+    A closed vocabulary, and deliberately a small one: only resources that exist
+    *and* have a permission guarding them appear here. ``policy``, ``incident``,
+    ``tool`` and the rest of the roadmap are absent because declaring a resource
+    nobody can act on would turn this table into a document of intentions — the
+    same rule the permission list itself follows.
+    """
+
+    ORGANIZATION = "organization"
+    USER = "user"
+    ROLE = "role"
+    AUDIT = "audit"
+    SECURITY = "security"
+    ASSET = "asset"
+    AGENT = "agent"
+
+
+class Action(StrEnum):
+    """The action half of a permission: what may be done to the resource.
+
+    Only the actions this build can perform. There is no ``execute``, ``approve``,
+    ``block`` or ``intercept``: those are runtime control-plane actions, and no
+    part of this build can perform one — an action vocabulary that listed them
+    would advertise enforcement that does not exist.
+    """
+
+    READ = "read"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    MANAGE = "manage"
+
+
+def parse_permission_code(code: str) -> tuple[Resource, Action]:
+    """Split ``code`` into its resource and action, or refuse it.
+
+    This is the vocabulary's single entry point: a code that is not
+    ``resource.action`` over *known* halves raises
+    :class:`UnknownPermissionError` instead of travelling into an authorization
+    check. Whether the pair is a permission this build actually declares is
+    :meth:`Permission.parse`'s stricter question.
+    """
+    if not isinstance(code, str):
+        raise UnknownPermissionError(f"permission code must be a string, got {type(code).__name__}")
+    segments = code.split(".")
+    if len(segments) != PERMISSION_CODE_SEGMENTS:
+        raise UnknownPermissionError(
+            f"{code!r} is not a permission code: expected exactly "
+            f"{PERMISSION_CODE_SEGMENTS} segments (resource.action)"
+        )
+    resource_code, action_code = segments
+    try:
+        resource = Resource(resource_code)
+    except ValueError as exc:
+        raise UnknownPermissionError(
+            f"{code!r} names an unknown resource {resource_code!r}"
+        ) from exc
+    try:
+        action = Action(action_code)
+    except ValueError as exc:
+        raise UnknownPermissionError(f"{code!r} names an unknown action {action_code!r}") from exc
+    return resource, action
 
 
 class Permission(StrEnum):
@@ -65,6 +180,32 @@ class Permission(StrEnum):
     AGENT_CREATE = "agent.create"
     AGENT_UPDATE = "agent.update"
     AGENT_DELETE = "agent.delete"
+
+    @classmethod
+    def parse(cls, code: str) -> Permission:
+        """The declared permission ``code`` names, or :class:`UnknownPermissionError`.
+
+        Stricter than :func:`parse_permission_code`: ``policy.read`` is a
+        well-formed ``resource.action`` pair, but this build declares no such
+        permission, so it is refused rather than accepted as a future code.
+        """
+        parse_permission_code(code)
+        try:
+            return cls(code)
+        except ValueError as exc:
+            raise UnknownPermissionError(
+                f"{code!r} is not a permission this build declares"
+            ) from exc
+
+    @property
+    def resource(self) -> Resource:
+        """What this permission governs (``agent.update`` → :attr:`Resource.AGENT`)."""
+        return parse_permission_code(self.value)[0]
+
+    @property
+    def action(self) -> Action:
+        """What it allows (``agent.update`` → :attr:`Action.UPDATE`)."""
+        return parse_permission_code(self.value)[1]
 
 
 class RoleCode(StrEnum):
@@ -181,6 +322,33 @@ ROLE_INTENTS: Mapping[RoleCode, str] = MappingProxyType(
         RoleCode.VIEWER: "Read-only access to permitted resources.",
     }
 )
+
+
+#: Which actions each resource currently supports, derived from the catalog below
+#: rather than declared separately — so a resource cannot advertise an action no
+#: permission implements, and a new permission cannot be forgotten here. Read it as
+#: the answer to "what can be done to this resource *today*".
+RESOURCE_ACTIONS: Mapping[Resource, frozenset[Action]] = MappingProxyType(
+    {
+        resource: frozenset(
+            permission.action for permission in Permission if permission.resource is resource
+        )
+        for resource in Resource
+    }
+)
+
+
+def permissions_for_resource(resource: Resource | str) -> tuple[Permission, ...]:
+    """Every permission that governs ``resource``, in declaration order.
+
+    An unknown resource raises, for the same reason an unknown role does: a lookup
+    that silently resolves to nothing looks like a resource nobody may touch.
+    """
+    try:
+        resolved = Resource(resource)
+    except ValueError as exc:
+        raise ValueError(f"unknown resource {resource!r}") from exc
+    return tuple(permission for permission in Permission if permission.resource is resolved)
 
 
 def permissions_for(role: RoleCode | str) -> frozenset[Permission]:

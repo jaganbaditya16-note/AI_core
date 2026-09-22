@@ -34,7 +34,8 @@ from aicore_api.api.deps import get_session
 from aicore_api.auth.authorization import OrganizationContext
 from aicore_api.auth.dependencies import require_permission
 from aicore_api.core.domain_errors import ConflictError
-from aicore_api.core.permissions import Permission, sort_permissions
+from aicore_api.core.permissions import Permission, parse_permission_code, sort_permissions
+from aicore_api.db.models.rbac import Permission as PermissionRow
 from aicore_api.db.repositories.memberships import MembershipRepository
 from aicore_api.db.repositories.organizations import OrganizationRepository
 from aicore_api.db.repositories.rbac import RoleCatalog
@@ -187,6 +188,23 @@ def list_roles(context: ReadRoles, session: SessionDep) -> RoleListResponse:
     )
 
 
+def _permission_read(permission: PermissionRow) -> PermissionRead:
+    """Publish one catalog row with the resource and action its code names.
+
+    ``parse_permission_code`` raises for a code this build cannot classify. That is
+    deliberate and consistent with an unknown role: a catalog row the application
+    cannot reason about is a deployment defect (the seed and the code disagree), so
+    it fails loudly rather than being published as an unclassifiable string.
+    """
+    resource, action = parse_permission_code(permission.code)
+    return PermissionRead(
+        code=permission.code,
+        resource=resource,
+        action=action,
+        description=permission.description,
+    )
+
+
 @router.get(
     "/{organization_id}/permissions",
     response_model=PermissionListResponse,
@@ -205,8 +223,5 @@ def list_permissions(context: ReadRoles, session: SessionDep) -> PermissionListR
     permissions = RoleCatalog(session).list_permissions()
     return PermissionListResponse(
         organization_id=context.organization_id,
-        permissions=[
-            PermissionRead(code=permission.code, description=permission.description)
-            for permission in permissions
-        ],
+        permissions=[_permission_read(permission) for permission in permissions],
     )

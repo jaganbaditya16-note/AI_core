@@ -23,6 +23,8 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from aicore_api.core.permissions import Action, Resource
+
 __all__ = [
     "MeResponse",
     "MemberListResponse",
@@ -155,9 +157,19 @@ class RoleListResponse(BaseModel):
 
 
 class PermissionRead(BaseModel):
-    """One capability the application knows how to check."""
+    """One capability the application knows how to check.
+
+    Phase 5 publishes the *shape* of the identifier as well as the identifier:
+    ``resource`` and ``action`` are the two halves of ``code`` (``agent.update`` →
+    ``agent`` + ``update``), typed as the closed vocabularies
+    :class:`~aicore_api.core.permissions.Resource` and
+    :class:`~aicore_api.core.permissions.Action`, so a client can group
+    capabilities without parsing strings it does not own.
+    """
 
     code: str
+    resource: Resource
+    action: Action
     description: str
 
 

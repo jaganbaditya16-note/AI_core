@@ -27,12 +27,15 @@ DESCRIPTION = """
 AICore is an enterprise AI control plane.
 
 **Implemented today:** health endpoints, the PostgreSQL multi-tenancy foundation,
-the authentication and RBAC foundation on top of it, the AI asset inventory, and
-the agent registry. Bearer API tokens identify a user, memberships bind them to an
-organization with a role, routes authorize against the explicit permissions that
-role grants, the inventory records what AI-related things an organization knows
+the authentication and RBAC foundation on top of it, the AI asset inventory, the
+agent registry, and the authorization foundation. Bearer API tokens identify a
+user, memberships bind them to an organization with a role, routes authorize
+against explicit permissions written as ``resource.action`` over closed
+vocabularies, the inventory records what AI-related things an organization knows
 about, and the registry gives an ``agent`` asset a stable identity that survives
-renames and version changes.
+renames and version changes. Authorization is a deterministic decision — computed
+from the membership, the role, the permission and the row's tenant, never by a
+model — and it is where a later policy phase will attach.
 
 Every tenant-scoped route resolves the caller's membership in the organization in
 its path before it runs. The policy engine, the action firewall, agent execution,

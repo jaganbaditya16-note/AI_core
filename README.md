@@ -1,12 +1,13 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 4: agent registry and
-identity**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL schema and
-tenant boundary, Phase 2 the identity layer on top of it (bearer tokens identify a
-user, memberships bind them to an organization with a role, protected routes
-authorize against explicit permissions), Phase 3 the AI asset inventory, and Phase
-4 the agent registry: a stable, server-generated identity for one of those assets,
-with the category, version and lifecycle state it was registered at.
+**Enterprise AI Control Plane** — currently at **Phase 5: permission model and
+authorization foundation**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL
+schema and tenant boundary, Phase 2 the identity layer on top of it (bearer tokens
+identify a user, memberships bind them to an organization with a role, protected
+routes authorize against explicit permissions), Phase 3 the AI asset inventory,
+Phase 4 the agent registry (a stable, server-generated identity for one of those
+assets), and Phase 5 the authorization foundation: a closed resource/action
+vocabulary and a deterministic, structured authorization decision.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -64,7 +65,7 @@ apps/
     src/aicore_api/     main · config · cli · api · auth · core · db · discovery · schemas
     tests/              Pytest suite (unit + PostgreSQL integration)
 packages/
-  types/                shared API contract types (health, errors, organizations, identity, assets, agents)
+  types/                shared API contract types (health, errors, organizations, identity, assets, agents, permissions)
 database/
   init/                 one-time bootstrap SQL (schema namespace only)
   migrations/           Alembic environment and revisions
@@ -73,7 +74,7 @@ database/
     versions/0003_assets.py
     versions/0004_agents.py
 tests/e2e/              Playwright smoke tests
-docs/                   architecture, scope, development guide, inventory, agents, ADRs
+docs/                   architecture, scope, development guide, inventory, agents, authorization, ADRs
 infrastructure/         docker-compose.yml
 scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
@@ -188,12 +189,52 @@ carries `X-Request-ID`.
   provider is integrated. Assets are registered by a person or by a future
   integration through an internal service boundary — see
   [docs/inventory.md](docs/inventory.md).
-- **No AI features.** No model provider is integrated; no policy engine, action
-  firewall, runtime containment, behaviour monitoring or incident handling.
+- **No policy engine or runtime enforcement.** Phase 5 made authorization an
+  explicit decision over a closed vocabulary, but the decision reads only the
+  membership, the role, the permission, the tenant and the row's ownership — there
+  is no policy language, no rule store, no action interception, no approval and no
+  kill switch. Nothing an agent does is blocked, because nothing runs here. See
+  [docs/authorization.md](docs/authorization.md).
+- **No AI features.** No model provider is integrated; no action firewall, runtime
+  containment, behaviour monitoring or incident handling.
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
+
+## What Phase 5 adds
+
+The **authorization foundation**: authorization is a vocabulary and a decision, not
+a string comparison hidden in a handler.
+
+- **A resource/action vocabulary** — every permission is `resource.action`
+  (`agent.update` → `agent` + `update`) whose halves come from closed enums:
+  resources `organization`, `user`, `role`, `audit`, `security`, `asset`, `agent`
+  and actions `read`, `create`, `update`, `delete`, `manage`. Nothing else parses;
+  there is no `execute`, `approve`, `kill` or `policy.*` until a phase implements
+  one.
+- **A deterministic decision object** — `AuthorizationDecision` answers *may this
+  principal use this permission in this organization, for this row?* with ALLOW or
+  DENY, a machine-readable reason (`role_permission_grant`, `missing_permission`,
+  `missing_membership`, `membership_not_active`, `resource_outside_tenant`,
+  `unknown_role`), and the identifiers it was made from. No model call, no network
+  client, no clock, no randomness — asserted structurally.
+- **Instance authorization** — holding `asset.update` is not enough for a row in
+  another organization, and every item route additionally authorizes the row it
+  loaded, so a repository that lost its tenant filter fails closed with a 404
+  instead of serving another tenant's record.
+- **Ownership, reported and not relied upon** — a decision says whether the caller
+  owns the row; ownership widens nothing in this phase.
+- **Unchanged security semantics** — non-members and foreign rows still answer
+  404, suspended memberships 403, and the role matrix is reviewed and unchanged
+  (owner 16, admin 13, security_admin 8, ai_admin 8, analyst 4, viewer 3).
+- **`GET /permissions` publishes the model** — each entry now carries `resource`
+  and `action` as closed vocabularies, mirrored in `packages/types`.
+- **No migration** — the catalog's constraints (code uniqueness, format checks,
+  uniqueness of grants, FK behaviour) were reviewed and already satisfy the
+  requirements; the head stays `0004_agents`.
+
+Design, decision semantics and limitations: [docs/authorization.md](docs/authorization.md).
 
 ## What Phase 4 adds
 
@@ -322,7 +363,10 @@ Design and rationale: [docs/database.md](docs/database.md).
    **Phase 4** gives an agent its stable identity. Automatic discovery (cloud,
    network, endpoint integrations), agent execution and the dependency graph are
    later work; nothing in this build observes or runs anything.
-3. Control: policy engine, action firewall, approvals, kill switch.
+3. ~~Authorization foundation~~ — **Phase 5** made permission and decision the
+   vocabulary everything else builds on. Control: policy engine, action firewall,
+   approvals, kill switch — the policy engine (Phase 6) evaluates context and
+   policy *through* this decision path rather than beside it.
 4. Monitoring: behaviour, anomalies, cost, audit, incidents (making `audit.read`
    and `security.read` mean something).
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic

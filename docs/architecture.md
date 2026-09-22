@@ -156,6 +156,50 @@ seam Phase 3 opened for a later audit phase.
 Identity model, lifecycle, API usage and current limitations:
 [agents.md](agents.md).
 
+## What Phase 5 adds
+
+The authorization foundation: a vocabulary for capabilities, and one place that
+decides whether a caller may use one.
+
+```
+identity → resource → action → permission → authorization decision
+                │
+                ├─ membership (active?)                     → ALLOW / DENY + reason
+                ├─ role → permissions
+                ├─ tenant of the row (same organization?)
+                └─ ownership fact (reported, never relied upon)
+```
+
+Three decisions shape it:
+
+**Authorization is a value, not a branch.** `AuthorizationDecision` states what was
+asked, what was decided and why, from facts read out of the database. Routes do not
+compare strings, and no handler invents a rule: the requirement is declared
+(`require_permission(Permission.ASSET_UPDATE)`), the decision is computed once, and
+the structural tests read the requirement back off the built application. This is
+what a later policy phase consumes instead of re-deriving — the decision is the
+seam.
+
+**The vocabulary is closed and validated.** `resource.action` with both halves
+enum-typed in `core/permissions.py`; `Permission.parse()` refuses anything else, and
+the same pattern is a `CHECK` constraint on `aicore.permissions.code`. A permission
+that no phase implements is not in the vocabulary, which is why the phase asserts
+the *absence* of `execute`, `approve`, `policy.*` and friends as a test.
+
+**Tenancy is part of the question, not an assumption about the query.** A decision
+can take a row's scope, and item routes re-assert it after loading
+(`api/scope.py`): holding the permission is not enough for another organization's
+row, and a repository that lost its tenant filter fails closed as a 404. Ownership
+is reported (`principal_is_owner`) and never widens an ALLOW — the composite foreign
+key remains the only thing that enforces ownership integrity.
+
+Denials keep the phase's existing semantics: non-members and foreign rows are 404
+(no existence oracle), a suspended membership is 403, a missing permission names
+itself. A role the code cannot reason about denies in the decision *and* raises at
+the boundary, because that is a deployment defect rather than a caller's mistake.
+
+Design and limitations: [authorization.md](authorization.md).
+
 ## What Phase 0 actually is
 
 A foundation: an application skeleton, a versioned API contract, a database
@@ -276,7 +320,9 @@ modules; they do not reshape these boundaries.
 2. ~~Inventory~~ — **Phase 3**. ~~Agent identity~~ — **Phase 4** (the registry).
    Automatic discovery (cloud, network, endpoint integrations), agent execution and
    the dependency graph remain.
-3. Policy engine and action firewall (deterministic decisions).
+3. ~~Authorization foundation~~ — **Phase 5**: decision object, resource/action
+   vocabulary, instance authorization. Policy engine and action firewall
+   (deterministic decisions) build on it.
 4. Audit, monitoring, anomalies, incidents.
 5. Intelligence layer (Nemotron / Nebius) as an *advisor* that proposes; the
    deterministic services continue to decide.

@@ -131,6 +131,13 @@ application code may ask for:
 | `agent.update` | Change a registered agent's record, version or lifecycle state |
 | `agent.delete` | Remove an agent identity and its inventory record |
 
+Phase 5 turned this table into a decision: a permission is `resource.action` over
+closed vocabularies, and the server answers *may this principal use this permission
+in this organization — for this row?* as a structured, deterministic
+`AuthorizationDecision`. The permission codes and the grants below are unchanged;
+what changed is that the answer is now a value with a reason rather than a branch.
+See [authorization.md](authorization.md).
+
 Code asks `require_permission(Permission.USER_READ)`. It never asks *"is this
 user an ADMIN?"* — a role check in a handler is a second, unauditable definition
 of who may do what, and a test scans the application modules to keep them out.

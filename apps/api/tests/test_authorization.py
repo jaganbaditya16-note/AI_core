@@ -46,7 +46,9 @@ ORG = "/organizations/{organization_id}"
 #: permission it must enforce. A route added without an entry here fails
 #: ``test_the_authorized_surface_is_what_the_routes_declare``.
 #: Every tenant-scoped route and the permission it declares. Phase 3 added the six
-#: inventory routes and Phase 4 the six registry routes; the list stays literal on
+#: inventory routes and Phase 4 the six registry routes; Phase 5 added no route at
+#: all — it changed how a requirement is *decided* (a resource/action vocabulary and
+#: a structured decision), not what the surface is. The list stays literal on
 #: purpose, because a literal expectation is what notices when a route acquires a
 #: permission it should not have, or loses the one it needs.
 EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {

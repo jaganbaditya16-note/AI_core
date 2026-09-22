@@ -1,20 +1,23 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 2: authentication and
-RBAC**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL schema and tenant
-boundary, and Phase 2 the identity layer on top of it: bearer tokens identify a
-user, memberships bind them to an organization with a role, and protected routes
-authorize against the explicit permissions that role grants.
+**Enterprise AI Control Plane** — currently at **Phase 3: AI asset discovery and
+inventory**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL schema and
+tenant boundary, Phase 2 the identity layer on top of it (bearer tokens identify a
+user, memberships bind them to an organization with a role, protected routes
+authorize against explicit permissions), and Phase 3 the inventory: one record per
+AI asset an organization knows about, with ownership, lifecycle, environment,
+discovery state and validated metadata.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
 an intelligence layer (NVIDIA Nemotron via Nebius Token Factory) providing
 reasoning and recommendations.
 
-**This repository does not implement any of that yet.** It contains the
-foundation those phases will be built on: an application skeleton, a versioned
-API contract, a PostgreSQL connection, container infrastructure, and tests. The
-overview page in the app says the same thing, and
+**Discovery is not automatic and control is not implemented.** Nothing in this
+repository scans a network or a cloud account: assets are recorded by a person
+through the API, or by a future integration through the internal service boundary
+described in [`docs/inventory.md`](docs/inventory.md). There is no policy engine,
+firewall, containment or monitoring, and
 [`docs/phase-0-scope.md`](docs/phase-0-scope.md) lists exactly what is absent.
 
 ## Architecture direction
@@ -58,15 +61,16 @@ apps/
     src/lib/            server-only config + health client
     src/components/     health panel, motion wrapper
   api/                  FastAPI backend
-    src/aicore_api/     main · config · cli · api · auth · core · db · schemas
+    src/aicore_api/     main · config · cli · api · auth · core · db · discovery · schemas
     tests/              Pytest suite (unit + PostgreSQL integration)
 packages/
-  types/                shared API contract types (health, errors, organizations, identity)
+  types/                shared API contract types (health, errors, organizations, identity, assets)
 database/
   init/                 one-time bootstrap SQL (schema namespace only)
   migrations/           Alembic environment and revisions
     versions/0001_organizations.py
     versions/0002_identity_and_rbac.py
+    versions/0003_assets.py
 tests/e2e/              Playwright smoke tests
 docs/                   architecture, scope, development guide, ADRs
 infrastructure/         docker-compose.yml
@@ -144,7 +148,9 @@ bash scripts/verify.sh --full # + live PostgreSQL + E2E where available
 ```
 
 `bash scripts/test-db.sh` starts a real PostgreSQL, provisions the role and
-database, and asserts `GET /health/ready` returns 200.
+database, migrates it from empty, checks the schema against the models
+(`alembic check`), proves the migration reverses, and runs the whole suite against
+it — readiness included.
 
 ## Health contract
 
@@ -170,15 +176,55 @@ carries `X-Request-ID`.
 - **No permissions for resources that do not exist.** `audit.read` and
   `security.read` are part of the catalog and appear on `GET /me`, but there is no
   audit trail or security finding to read yet — no route pretends otherwise.
-- **No domain tables beyond the tenant root and the identity tables.** The agent,
-  model, tool, policy, event and incident tables arrive in later phases, through
-  migrations.
-- **No AI features.** No model provider is integrated; no agent/model/tool
-  inventory, policy engine, firewall, audit, monitoring or incidents.
+- **No domain tables beyond the tenant root, the identity tables and the asset
+  inventory.** The policy, event and incident tables arrive in later phases,
+  through migrations.
+- **No automatic discovery.** Nothing scans a network or a cloud account, and no
+  provider is integrated. Assets are registered by a person or by a future
+  integration through an internal service boundary — see
+  [docs/inventory.md](docs/inventory.md).
+- **No AI features.** No model provider is integrated; no policy engine, action
+  firewall, runtime containment, behaviour monitoring or incident handling.
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
+
+## What Phase 3 adds
+
+The AI **inventory**: what an organization knows it has, and what it knows about
+each thing.
+
+- **One inventory table, seven asset types** — `agent`, `application`, `model`,
+  `tool`, `mcp_server`, `api`, `data_source`, all in `aicore.assets`. The type is a
+  column and the type-specific detail lives in validated `metadata`, so list,
+  filter, paginate, own, classify and isolate work identically for every type
+  instead of being written seven times.
+- **Recorded state, not runtime state** — lifecycle (`draft`, `active`,
+  `suspended`, `retired`), discovery state (`managed`, `unknown`, `shadow`),
+  environment (`development`, `staging`, `production`, `unknown`) and a risk
+  classification (`low` … `critical`, `unassessed`) that is **stored only**: no
+  scoring, no enforcement, no kill switch.
+- **Real ownership** — the owner is a membership in the same organization,
+  enforced by a composite foreign key, so a cross-tenant owner is unrepresentable
+  in the database rather than rejected by a handler. Application code never
+  invents a user.
+- **Deterministic deduplication** — `(organization_id, asset_type,
+  external_identifier)` is unique when the identifier is present, so re-reporting
+  an asset converges on one record. Names are never identifiers.
+- **Asset API** — `GET|POST /organizations/{id}/assets`,
+  `GET|PATCH|DELETE /organizations/{id}/assets/{asset_id}` and
+  `GET /organizations/{id}/assets/owners`: repeatable filters, bounded pagination
+  (`limit` ≤ 200, opt-in `total`), and four permissions (`asset.read`,
+  `asset.create`, `asset.update`, `asset.delete`) checked by the backend.
+- **A discovery seam, not a discovery feature** — `aicore_api.discovery` defines
+  the normalise → validate → ownership → record path a future integration calls.
+  No cloud or network integration ships, and nothing claims otherwise.
+- **Audit readiness** — inventory changes emit domain events
+  (`asset.created`, `asset.updated`, `asset.deleted`, `asset.discovered`) through
+  one boundary. No audit system is implemented; the events are hooks, not records.
+
+Design, API usage and current limitations: [docs/inventory.md](docs/inventory.md).
 
 ## What Phase 2 adds
 
@@ -189,9 +235,10 @@ Identity and access control, enforced by the server:
   by `python -m aicore_api.cli`, never over HTTP, and there is no
   development-only authentication path.
 - **Roles and permissions** — six roles (`owner`, `admin`, `security_admin`,
-  `ai_admin`, `analyst`, `viewer`) built from eight explicit permissions. Code asks
-  for a permission, never for a role name, so privilege changes happen in one
-  catalog rather than in route handlers.
+  `ai_admin`, `analyst`, `viewer`) built from explicit permissions (eight here;
+  twelve after Phase 3 added the four `asset.*` permissions). Code asks for a
+  permission, never for a role name, so privilege changes happen in one catalog
+  rather than in route handlers.
 - **Authorization** — every tenant-scoped route resolves the caller's membership
   in the organization named in the path and checks one required permission before
   the handler runs: `authenticate → identify → resolve organization → verify
@@ -232,8 +279,9 @@ Design and rationale: [docs/database.md](docs/database.md).
 
 1. ~~Tenants~~ — **Phase 1**. ~~Users, roles, permissions, membership
    enforcement~~ — **Phase 2**.
-2. Discovery and inventory: agents, models, tools, dependencies, shadow AI — and
-   the permissions that govern them (no such permission exists yet, deliberately).
+2. ~~Discovery and inventory~~ — **Phase 3** records it. Automatic discovery
+   (cloud, network, endpoint integrations), agent identity, agent execution and
+   the dependency graph are later work; nothing in this build observes anything.
 3. Control: policy engine, action firewall, approvals, kill switch.
 4. Monitoring: behaviour, anomalies, cost, audit, incidents (making `audit.read`
    and `security.read` mean something).

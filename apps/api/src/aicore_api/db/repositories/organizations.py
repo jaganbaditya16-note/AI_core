@@ -23,7 +23,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -156,9 +156,29 @@ class OrganizationScopedRepository:
         engine-level guard in :mod:`aicore_api.db.tenancy` is the backstop for the
         case where somebody does not.
         """
+        self._require_tenant_owned(model)
+        return select(model).where(model.organization_id == self.organization_id)
+
+    def _scoped_count(self, model: Any) -> Any:
+        """A ``COUNT`` over ``model``, filtered to this repository's tenant.
+
+        Its own helper because the obvious spelling is wrong in a way that only
+        shows up at runtime: ``select(func.count()).select_from(Model)`` looks
+        tenant-scoped and is not — the filter is the part that matters, and a count
+        is the easiest query to forget it on.
+        """
+        self._require_tenant_owned(model)
+        return (
+            select(func.count())
+            .select_from(model)
+            .where(model.organization_id == self.organization_id)
+        )
+
+    @staticmethod
+    def _require_tenant_owned(model: Any) -> None:
+        """Refuse to build a tenant-scoped query over something without a tenant."""
         if not hasattr(model, "organization_id"):
             raise TenantScopeError(
                 f"{getattr(model, '__name__', model)!r} is not tenant-owned, so it must not be "
                 "reached through a tenant-scoped repository"
             )
-        return select(model).where(model.organization_id == self.organization_id)

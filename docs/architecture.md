@@ -65,6 +65,49 @@ HTTP: there is no sign-up route to attack, no password stored anywhere, and
 nothing that behaves differently in development than in production. Design and
 rationale: [authentication.md](authentication.md).
 
+## What Phase 3 adds
+
+The inventory: one table for every AI asset the organization knows about, and the
+API that manages it.
+
+```
+POST /organizations/{id}/assets ─► AssetCreate ─► owner resolution ─► AssetRepository
+                                        │                                   │
+                                        └─ metadata validated per type       └─ tenant-filtered statement
+                                                                                (guard refuses anything else)
+
+discovery integration ─► DiscoveredAsset ─► validate ─► active membership ─► ON CONFLICT (org, type, external id)
+```
+
+Three decisions shape it, and all three are about not repeating a mistake later:
+
+**One table, not seven.** `agent`, `application`, `model`, `tool`, `mcp_server`,
+`api` and `data_source` differ in what is interesting about them, not in how they
+are stored, listed, filtered, owned or isolated. The type is a column and the
+type-specific detail is validated JSONB, so the seven-way split never has to be
+undone. The cost is explicit: metadata cannot be joined or indexed per type, which
+is the right trade for a phase whose queries are "what do we have".
+
+**Tenant isolation is a database property first.** `assets` inherits the
+tenant-owned conventions (non-null `organization_id`, `ON DELETE RESTRICT`), and
+the owner is a *composite* foreign key to a membership in the same organization —
+so "an asset in A owned by a user in B" is a row PostgreSQL will not accept. The
+repository cannot be constructed without an organization, and the tenancy guard
+refuses any statement that does not filter on `organization_id`: a forgotten
+`WHERE` is an exception, not a wider query.
+
+**Discovery is a boundary, not a feature.** `aicore_api.discovery` is the internal
+service a future integration calls: it normalizes the report, validates metadata
+against the asset type, resolves an owner to an active membership, and writes
+idempotently on `(organization_id, asset_type, external_identifier)`. No cloud or
+network integration exists, and the API says so.
+
+Inventory changes emit domain events (`aicore_api/core/events.py`) at the four
+points worth auditing later. That is a seam for Phase 8, not an audit system, and
+it is the reason the later phase has one boundary to attach to.
+
+Design, API usage and current limitations: [inventory.md](inventory.md).
+
 ## What Phase 0 actually is
 
 A foundation: an application skeleton, a versioned API contract, a database
@@ -136,14 +179,17 @@ apps/api/src/aicore_api/
   main.py         application factory: settings, middleware, handlers, router
   config.py       Pydantic settings + validation (fail-fast, no defaults for secrets)
   api/            HTTP layer only: router aggregation + route modules
-  core/           cross-cutting: logging, error envelope, request id, middleware
-  db/             engine/session factory + connectivity probe (no models yet)
+  core/           cross-cutting: logging, error envelope, request id, middleware,
+                  the permission catalog, asset vocabularies, domain events
+  db/             engine/session factory, connectivity probe, models, repositories
+  discovery/      the ingestion boundary a future integration calls (no integration)
+  auth/           credentials → principal → organization context → permission check
   schemas/        Pydantic models = the published contract
 ```
 
-`api/` contains no business logic, `db/` contains no domain models, and
-`schemas/` contains no Phase 1+ entities. New features add modules; they do not
-reshape these boundaries.
+`api/` contains no business logic, `db/` contains no HTTP concerns, and
+`schemas/` publishes the contract without implementing it. New features add
+modules; they do not reshape these boundaries.
 
 ## Decisions and trade-offs
 
@@ -179,8 +225,8 @@ reshape these boundaries.
 
 1. ~~Identity, tenants, RBAC~~ — **tenants in Phase 1, identity and RBAC in
    Phase 2**.
-2. Inventory (agents, models, tools, dependencies) + discovery — with the
-   permissions that govern them, added to the same catalog.
+2. ~~Inventory~~ — **Phase 3**. Automatic discovery (cloud, network, endpoint
+   integrations), agent identity, agent execution and the dependency graph remain.
 3. Policy engine and action firewall (deterministic decisions).
 4. Audit, monitoring, anomalies, incidents.
 5. Intelligence layer (Nemotron / Nebius) as an *advisor* that proposes; the

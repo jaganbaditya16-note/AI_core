@@ -1,4 +1,4 @@
-# Database and multi-tenancy (Phases 1–2)
+# Database and multi-tenancy (Phases 1–3)
 
 Phase 1 added the PostgreSQL foundation and the tenant boundary every later phase
 builds on. Phase 2 adds the identity and access tables that turn that boundary
@@ -142,6 +142,79 @@ Role codes and permission codes are validated with a CHECK constraint as well as
 in the model, so a malformed code cannot be introduced by a hand-written
 `INSERT` either. Full design: [authentication.md](authentication.md).
 
+## The asset inventory table (Phase 3)
+
+One table for all seven asset types — the reasoning is in
+[inventory.md](inventory.md), the schema mechanics are here.
+
+```
+aicore.assets
+  id                    uuid pk
+  organization_id       uuid not null → organizations(id) on delete restrict
+  owner_membership_id   uuid null
+                        ─┬─ (organization_id, owner_membership_id)
+                         └─ → memberships(organization_id, id) on delete restrict
+  name                  varchar(200) not null
+  description           varchar(2000) null
+  asset_type            varchar(32) not null   check in (agent … data_source)
+  status                varchar(32) not null   check in (draft, active, suspended, retired)
+  environment           varchar(32) not null   check in (development, staging, production, unknown)
+  discovery_state       varchar(32) not null   check in (managed, unknown, shadow)
+  risk_classification   varchar(32) not null   check in (low … unassessed)  -- storage only
+  metadata              jsonb null             check metadata is null or jsonb_typeof(metadata) = 'object'
+  discovery_source      varchar(100) not null   -- 'manual' or 'integration:<source>'
+  external_identifier   varchar(512) null      -- the integration's own key
+  last_seen_at          timestamptz null
+  created_at, updated_at timestamptz not null
+```
+
+Five details carry weight:
+
+- **The composite foreign key to `memberships`.** A single-column key to
+  `memberships(id)` would let an asset in one organization be owned by a
+  membership of another; the pair keyed on `(organization_id, owner_membership_id)`
+  makes that row impossible to insert. It needs a unique constraint on
+  `memberships(organization_id, id)` — redundant for a UUID primary key, but
+  PostgreSQL requires a unique index on the referenced columns, so migration
+  `0003_assets` adds it. `ON DELETE RESTRICT` keeps a membership that still owns
+  assets from being removed.
+- **A partial unique index for deduplication.** `(organization_id, asset_type,
+  external_identifier)` — `WHERE external_identifier IS NOT NULL`, because manual
+  registrations have none and many may be null. PostgreSQL chose this over a
+  hand-rolled `SELECT then INSERT`, which would race a concurrent collector.
+- **Lengths are constraints too.** `name`, `description`, `external_identifier` and
+  `discovery_source` each carry `CHECK (char_length(btrim(...)) BETWEEN 1 AND …)`,
+  so an empty or whitespace-only value is refused by the database, not only by
+  Pydantic.
+- **`JSONB` with a type check.** `jsonb_typeof(metadata) = 'object'` means a JSON
+  scalar cannot be stored even by a hand-written `INSERT`. The column is
+  `JSONB(none_as_null=True)` in the model: SQLAlchemy would otherwise send Python
+  `None` as the JSON value `null`, which is *not* SQL NULL and violates the check.
+- **`discovery_source` is never client-settable.** The API sets `manual`, the
+  discovery service sets `integration:<source>`; a record always says where it
+  came from.
+
+Five indexes beyond the primary key, each for a query that exists:
+
+| Index | For |
+|---|---|
+| `uq_assets_organization_id_asset_type_external_identifier` (partial unique) | Deduplication — and the `ON CONFLICT` target |
+| `ix_assets_organization_id` | Every listing: the tenant filter (from `TenantOwnedMixin`) |
+| `ix_assets_organization_id_asset_type` | The filter an inventory is interrogated with most |
+| `ix_assets_organization_id_discovery_state` | The second such filter (`managed` / `unknown` / `shadow`) |
+| `ix_assets_owner_membership_id` | "Everything this person owns" — and the `ON DELETE RESTRICT` check above, which has to be answerable without scanning the table |
+
+`status`, `environment` and `risk_classification` are deliberately not indexed:
+they are low-cardinality within one tenant, so another index would add write cost
+for no read benefit. Paging orders by `created_at` on top of the tenant filter;
+a dedicated `(organization_id, created_at)` index is the first thing to add if an
+organization's inventory stops fitting comfortably in memory.
+
+`assets` is tenant-owned, so it is covered by everything `db/tenancy.py` enforces:
+the model inherits `TenantOwnedMixin` (which is *how* the guard recognizes it), and
+any statement that touches it without a bound tenant or without filtering on
+`organization_id` is refused with `TenantScopeError` before it reaches PostgreSQL.
+
 ## Migrations
 
 Alembic, as a **dev dependency** (`apps/api/pyproject.toml`). The API runtime
@@ -154,6 +227,7 @@ database/migrations/env.py      # reads AICORE_DATABASE_URL through the app's se
 database/migrations/versions/
   0001_organizations.py         # Phase 1: schema + tenant root
   0002_identity_and_rbac.py     # Phase 2: users, roles, permissions, grants, memberships, tokens
+  0003_assets.py                # Phase 3: the inventory table + the four asset permissions
 ```
 
 ```bash

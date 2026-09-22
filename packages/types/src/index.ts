@@ -2,13 +2,13 @@
  * Shared API contract types.
  *
  * The published surface covers exactly what the API serves: health endpoints,
- * the common error envelope, the organization (tenant) contract, and — since
- * Phase 2 — the identity contract (who the caller is, which organizations they
- * belong to, what role they hold and what it grants).
+ * the common error envelope, the organization (tenant) contract, the identity
+ * contract (who the caller is, which organizations they belong to, what role they
+ * hold and what it grants), and — since Phase 3 — the AI asset inventory.
  *
- * Domain contracts for AI inventory, policy, the action firewall, audit records
- * and incidents are intentionally NOT defined: those phases are not implemented,
- * and a type published now would be a promise this build does not keep.
+ * Domain contracts for policy, the action firewall, audit records and incidents
+ * are intentionally NOT defined: those phases are not implemented, and a type
+ * published now would be a promise this build does not keep.
  *
  * These types mirror the Pydantic models in `apps/api/src/aicore_api/schemas/`.
  * A backend test (`tests/test_openapi_contract.py`) asserts the two stay aligned.
@@ -170,6 +170,81 @@ export interface Permission {
 export interface PermissionListResponse {
   organization_id: string;
   permissions: Permission[];
+}
+
+/* ── AI asset inventory (Phase 3) ────────────────────────────────────────── */
+
+/**
+ * What kind of AI-related thing an inventory record describes. One closed
+ * vocabulary for every type: the type is a column, and the type-specific detail
+ * lives in `metadata` rather than in a table per type.
+ */
+export type AssetType =
+  "agent" | "application" | "model" | "tool" | "mcp_server" | "api" | "data_source";
+
+/** Where an asset is deployed. `unknown` is stored honestly, not guessed. */
+export type AssetEnvironment = "development" | "staging" | "production" | "unknown";
+
+/** Lifecycle of a record. `suspended` is inventory state only — no containment. */
+export type AssetStatus = "draft" | "active" | "suspended" | "retired";
+
+/**
+ * How far the asset is accounted for:
+ * `managed` — registered in AICore on purpose;
+ * `unknown` — observed, ownership not yet established;
+ * `shadow` — observed outside the organization's known inventory.
+ */
+export type DiscoveryState = "managed" | "unknown" | "shadow";
+
+/** Storage only in this phase: nothing scores or enforces it yet. */
+export type RiskClassification = "low" | "medium" | "high" | "critical" | "unassessed";
+
+/** Who is accountable for an asset: a user, through their membership. */
+export interface AssetOwner {
+  membership_id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+}
+
+/** One record in `GET /organizations/{organization_id}/assets`. */
+export interface Asset {
+  id: string;
+  organization_id: string;
+  name: string;
+  description: string | null;
+  asset_type: AssetType;
+  status: AssetStatus;
+  environment: AssetEnvironment;
+  discovery_state: DiscoveryState;
+  risk_classification: RiskClassification;
+  owner: AssetOwner | null;
+  metadata: Record<string, unknown> | null;
+  /** Set by the server: a report from an integration is not a manual entry. */
+  discovery_source: string;
+  /** When an integration last observed it; null for a manually registered asset. */
+  last_seen_at: string | null;
+  /** An integration's own identifier for the asset, when it has one. */
+  external_identifier: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `GET /organizations/{organization_id}/assets`. */
+export interface AssetListResponse {
+  organization_id: string;
+  items: Asset[];
+  count: number;
+  limit: number;
+  offset: number;
+  /** Number of matching assets, or `null` unless the request asked with `?total=true`. */
+  total: number | null;
+}
+
+/** `GET /organizations/{organization_id}/assets/owners`: who an asset can be assigned to. */
+export interface AssetOwnerListResponse {
+  organization_id: string;
+  owners: AssetOwner[];
 }
 
 /* ── Errors ──────────────────────────────────────────────────────────────── */

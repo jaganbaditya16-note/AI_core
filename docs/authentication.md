@@ -89,18 +89,20 @@ seniority:
 
 | Role | Purpose | Permissions |
 |---|---|---|
-| `owner` | Full administration of the organization it owns | all eight |
-| `admin` | General organization administration | `organization.read`, `organization.update`, `user.read`, `user.manage`, `role.read` |
-| `security_admin` | Security, audit, incidents, containment, security configuration | `organization.read`, `user.read`, `audit.read`, `security.read` |
-| `ai_admin` | Administration of AI assets and the AI platform | `organization.read`, `user.read` |
-| `analyst` | Read and analyse AI and security information | `organization.read`, `security.read` |
-| `viewer` | Read-only access to permitted resources | `organization.read` |
+| `owner` | Full administration of the organization it owns | all twelve |
+| `admin` | General organization administration | `organization.read`, `organization.update`, `user.read`, `user.manage`, `role.read`, `asset.read`, `asset.create`, `asset.update`, `asset.delete` |
+| `security_admin` | Security, audit, incidents, containment, security configuration | `organization.read`, `user.read`, `audit.read`, `security.read`, `asset.read`, `asset.update` |
+| `ai_admin` | Administration of AI assets and the AI platform | `organization.read`, `user.read`, `asset.read`, `asset.create`, `asset.update` |
+| `analyst` | Read and analyse AI and security information | `organization.read`, `security.read`, `asset.read` |
+| `viewer` | Read-only access to permitted resources | `organization.read`, `asset.read` |
 
 The catalog lives in one place: `aicore_api/core/permissions.py`. It is seeded
 into the database by migration `0002_identity_and_rbac`, and a test compares the
 two copies against the live rows, so a role cannot silently lose a capability in a
-deployment. `ai_admin` gaining inventory-management permissions is a Phase 3
-change: no permission exists for a resource that does not exist yet.
+deployment. Phase 3 added the four `asset.*` permissions this table now shows;
+a permission still does not exist for a resource that does not exist, which is why
+`ai_admin` stewards the inventory without being able to delete from it, and why
+`security_admin` may record what it found without being able to create records.
 
 ## The permission model
 
@@ -117,6 +119,10 @@ application code may ask for:
 | `role.manage` | Change which permissions a role grants |
 | `audit.read` | Read the audit trail |
 | `security.read` | Read security findings and posture |
+| `asset.read` | See the organization's AI inventory |
+| `asset.create` | Register an asset in the inventory |
+| `asset.update` | Change an inventory record |
+| `asset.delete` | Remove an inventory record |
 
 Code asks `require_permission(Permission.USER_READ)`. It never asks *"is this
 user an ADMIN?"* — a role check in a handler is a second, unauditable definition
@@ -209,8 +215,10 @@ Stated here so the boundary is as visible as the implementation:
 - **no user-management API** — `POST /organizations` remains a development/test
   provisioning route (404 elsewhere), because Phase 2 has no
   platform-administrator concept that could authorize tenant creation;
-- **no permission for anything that does not exist** — no agent, model, tool,
-  policy, firewall or incident permissions;
+- **no permission for anything that does not exist** — no `agent.execute`,
+  `agent.suspend`, `policy.*`, `firewall.*` or `incident.*` permission. The four
+  `asset.*` permissions exist because Phase 3 built the resource they guard: an
+  inventory whose only operation is "read everything" would not be one;
 - **no PostgreSQL Row Level Security** — the design is documented and the schema
   is prepared for it, but it is not enabled (see [database.md](database.md));
 - **no audit records** — `audit.read` is a permission whose subject arrives in a

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -89,8 +89,7 @@ class MembershipRepository(OrganizationScopedRepository):
 
     def count(self) -> int:
         """How many memberships this organization has."""
-        statement = self._scoped(func.count()).select_from(Membership)
-        return int(self.execute(statement).scalar_one())
+        return int(self.execute(self._scoped_count(Membership)).scalar_one())
 
 
 def memberships_for_user(

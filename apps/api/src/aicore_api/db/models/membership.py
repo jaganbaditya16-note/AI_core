@@ -98,6 +98,12 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, TenantOwnedMixin, Base):
         # "what is this user's role here?" ambiguous, and ambiguity in an
         # authorization decision is a defect, not a feature.
         UniqueConstraint("organization_id", "user_id"),
+        # Redundant with the primary key, and load-bearing anyway: an asset records
+        # its owner as a membership *of its own organization* through a composite
+        # foreign key, and PostgreSQL can only reference a unique set of columns.
+        # This is that set — so "the owner belongs to this tenant" is enforced by
+        # the database rather than remembered by the application.
+        UniqueConstraint("organization_id", "id"),
         CheckConstraint(_STATUS_CHECK, name="status_valid"),
         {"comment": TABLE_COMMENT},
     )

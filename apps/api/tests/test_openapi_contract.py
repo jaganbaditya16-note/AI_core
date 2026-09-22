@@ -36,6 +36,67 @@ EXPECTED_IDENTITY_SCHEMAS = {
 }
 
 
+#: Phase 3's published shapes. The inventory carries the same 16 fields on read as
+#: on every other read of an asset, and the request models publish what a client is
+#: allowed to send — never `id`, `organization_id`, `created_at` or
+#: `discovery_source`, which the server owns.
+EXPECTED_ASSET_SCHEMAS = {
+    "AssetRead": {
+        "id",
+        "organization_id",
+        "name",
+        "description",
+        "asset_type",
+        "status",
+        "environment",
+        "discovery_state",
+        "risk_classification",
+        "owner",
+        "metadata",
+        "discovery_source",
+        "last_seen_at",
+        "external_identifier",
+        "created_at",
+        "updated_at",
+    },
+    "AssetListResponse": {"organization_id", "items", "count", "limit", "offset", "total"},
+    "AssetOwnerRead": {"membership_id", "user_id", "full_name", "email"},
+    "AssetOwnerListResponse": {"organization_id", "owners"},
+}
+
+EXPECTED_ASSET_REQUEST_FIELDS = {
+    "AssetCreate": {
+        "name",
+        "description",
+        "asset_type",
+        "status",
+        "environment",
+        "discovery_state",
+        "risk_classification",
+        "owner_user_id",
+        "metadata",
+        "external_identifier",
+    },
+    "AssetUpdateRequest": {
+        "name",
+        "description",
+        "status",
+        "environment",
+        "discovery_state",
+        "risk_classification",
+        "owner_user_id",
+        "metadata",
+        "external_identifier",
+    },
+}
+
+ASSET_ROUTES = (
+    "/organizations/{organization_id}/assets",
+    "/organizations/{organization_id}/assets/owners",
+    "/organizations/{organization_id}/assets/{asset_id}",
+)
+
+
 def test_openapi_document_is_served(client: TestClient) -> None:
     response = client.get("/openapi.json")
 
@@ -75,19 +136,62 @@ def test_identity_schema_fields(client: TestClient) -> None:
         assert not published & {"token", "token_hash", "password", "secret"}, name
 
 
+def test_asset_schema_fields(client: TestClient) -> None:
+    """The inventory contract is published, and the server-owned fields are not inputs."""
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    for name, fields in EXPECTED_ASSET_SCHEMAS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    for name, fields in EXPECTED_ASSET_REQUEST_FIELDS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    for name in EXPECTED_ASSET_REQUEST_FIELDS:
+        published = set(schemas[name]["properties"])
+        assert not published & {"id", "organization_id", "created_at", "discovery_source"}, name
+
+
+def test_the_asset_vocabularies_are_published(client: TestClient) -> None:
+    """A client can read the closed vocabularies from the document, not from prose."""
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    assert set(schemas["AssetType"]["enum"]) == {
+        "agent",
+        "application",
+        "model",
+        "tool",
+        "mcp_server",
+        "api",
+        "data_source",
+    }
+    assert set(schemas["AssetStatus"]["enum"]) == {"draft", "active", "suspended", "retired"}
+    assert set(schemas["DiscoveryState"]["enum"]) == {"managed", "unknown", "shadow"}
+
+
 def test_protected_routes_document_their_refusals(client: TestClient) -> None:
     """OpenAPI must tell a client that credentials are required, and how it fails."""
     paths = client.get("/openapi.json").json()["paths"]
 
     # Every protected route can answer 401: no usable credential.
-    for route in (
-        "/me",
-        "/organizations/{organization_id}",
-        "/organizations/{organization_id}/members",
-        "/organizations/{organization_id}/roles",
-        "/organizations/{organization_id}/permissions",
+    for method, route in (
+        ("get", "/me"),
+        ("get", "/organizations/{organization_id}"),
+        ("get", "/organizations/{organization_id}/members"),
+        ("get", "/organizations/{organization_id}/roles"),
+        ("get", "/organizations/{organization_id}/permissions"),
+        *((verb, route) for route in ASSET_ROUTES for verb in ("get",)),
     ):
-        assert "401" in paths[route]["get"]["responses"], route
+        assert "401" in paths[route][method]["responses"], route
+
+    for method, route in (
+        ("post", "/organizations/{organization_id}/assets"),
+        ("get", "/organizations/{organization_id}/assets/{asset_id}"),
+        ("patch", "/organizations/{organization_id}/assets/{asset_id}"),
+        ("delete", "/organizations/{organization_id}/assets/{asset_id}"),
+    ):
+        assert "401" in paths[route][method]["responses"], route
 
     # A tenant-scoped route can also answer 403 (the role lacks the permission, or
     # the membership is suspended) and 404 (no such organization — which is also
@@ -97,6 +201,7 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         "/organizations/{organization_id}/members",
         "/organizations/{organization_id}/roles",
         "/organizations/{organization_id}/permissions",
+        *ASSET_ROUTES,
     ):
         responses = paths[route]["get"]["responses"]
         assert "403" in responses, route
@@ -120,13 +225,31 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         | EXPECTED_ORGANIZATION_FIELDS
         | report_fields
         | {field for fields in EXPECTED_IDENTITY_SCHEMAS.values() for field in fields}
+        | {field for fields in EXPECTED_ASSET_SCHEMAS.values() for field in fields}
     )
     for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
 
-    # Every published identity shape has an interface in the mirror.
-    for name in ("MeResponse", "Membership", "Member", "Role", "Permission"):
+    # Every published shape has an interface in the mirror.
+    for name in (
+        "MeResponse",
+        "Membership",
+        "Member",
+        "Role",
+        "Permission",
+        "Asset",
+        "AssetListResponse",
+        "AssetOwner",
+        "AssetOwnerListResponse",
+    ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
+
+    # …and every closed asset vocabulary is enumerated there rather than left as
+    # a bare `string`, so a client that switches on the type is checked by tsc.
+    for name in ("AssetType", "AssetStatus", "DiscoveryState", "RiskClassification"):
+        assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
+    for value in ("mcp_server", "data_source", "shadow", "retired", "unassessed"):
+        assert f'"{value}"' in source, f"packages/types is missing the literal {value!r}"
 
     # Guard against a domain model creeping into phases that are not implemented.
     for not_yet in ("Agent", "Policy", "Incident", "ActionFirewall", "ModelRegistry"):

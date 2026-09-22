@@ -29,6 +29,7 @@ from sqlalchemy import Engine, delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from aicore_api.db.models.api_token import ApiToken
+from aicore_api.db.models.asset import Asset
 from aicore_api.db.models.membership import Membership, MembershipStatus
 from aicore_api.db.models.organization import Organization
 from aicore_api.db.models.user import User, UserStatus
@@ -339,6 +340,15 @@ def purge_identities(engine: Engine, identities: Iterable[Identity]) -> None:
     with _session(engine) as session:
         for identity in identities:
             session.execute(delete(ApiToken).where(ApiToken.user_id == identity.user_id))
+
+        for identity in identities:
+            # The inventory goes first: an asset's owner is a membership of its own
+            # organization, and that foreign key is RESTRICT — so a membership with
+            # assets cannot be removed, and deletion order is not a detail.
+            with bind_tenant(identity.organization_id):
+                session.execute(
+                    delete(Asset).where(Asset.organization_id == identity.organization_id)
+                )
 
         for identity in identities:
             for organization_id, membership_id in identity.memberships():

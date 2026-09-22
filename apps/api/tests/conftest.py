@@ -41,6 +41,7 @@ from aicore_api.db import tenancy  # noqa: E402
 from aicore_api.db.base import APP_SCHEMA  # noqa: E402
 from aicore_api.db.session import dispose_engine  # noqa: E402
 from aicore_api.main import create_app  # noqa: E402
+from assets_fixture import AssetFactory  # noqa: E402
 from identity_fixture import Identity, IdentityFactory  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
 
@@ -189,6 +190,37 @@ def authenticate(database_client: TestClient):
         return database_client
 
     return attach
+
+
+@pytest.fixture
+def owner_identity(identity_factory: IdentityFactory) -> Identity:
+    """An owner of a fresh organization — the caller most Phase 3 tests act as."""
+    return identity_factory(role_code="owner")
+
+
+@pytest.fixture
+def assets(
+    authenticate, owner_identity: Identity, integration_engine: Engine
+) -> Iterator[AssetFactory]:
+    """An owner of a fresh tenant, authenticated, and a factory for their assets.
+
+    Every Phase 3 test needs the same three things: a tenant that belongs to
+    nobody else, a credential that can act in it, and assets to act on. The assets
+    are created *through the API* by the factory, so a test that uses this fixture
+    is already exercising the create path it is about to assert on.
+    """
+    factory = AssetFactory(
+        client=authenticate(owner_identity),
+        organization_id=owner_identity.organization_id,
+        engine=integration_engine,
+    )
+    try:
+        yield factory
+    finally:
+        # Before the identity purge, which happens after this fixture: a membership
+        # that still owns assets cannot be deleted (the composite foreign key is
+        # RESTRICT), so the inventory has to go first.
+        factory.purge()
 
 
 @pytest.fixture

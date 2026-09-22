@@ -26,9 +26,15 @@ what is and is not in the repository at this point.
 
 ## Explicitly out of scope — not implemented
 
-Nothing below exists in this repository, not even as a stub. Anything that
-looked like a fake version of these would be worse than nothing, because it
-would misrepresent the security posture of the system.
+This list describes the Phase 0 baseline. Phase 1 has since added tenants
+([database.md](database.md)), Phase 2 identity and authorization
+([authentication.md](authentication.md)), and Phase 3 the AI asset inventory
+([inventory.md](inventory.md)) — the entries below that those phases cover say
+what Phase 0 did not build, and the rest are still absent.
+
+Nothing below existed in Phase 0, not even as a stub. Anything that looked like a
+fake version of these would be worse than nothing, because it would misrepresent
+the security posture of the system.
 
 **Identity & access:** sign-up, login, sessions, password recovery, invitation
 flows, SSO/OIDC providers. (Phase 2 provisions identities out of band instead —

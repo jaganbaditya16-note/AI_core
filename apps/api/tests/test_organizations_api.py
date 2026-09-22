@@ -1,12 +1,18 @@
 """The minimal organization persistence path over HTTP.
 
-Phase 1 deliberately ships two routes in development/test only: there is no
-authentication yet, so a tenant-creating endpoint cannot be authorized and must
-not exist in production. These tests pin both halves of that behaviour.
+Two halves, both pinned here:
+
+- **Reading a tenant is authorized.** Phase 2 protects ``GET /organizations/{id}``
+  behind an authenticated membership, so these tests carry a real credential —
+  the same one an operator would provision with the CLI.
+- **Creating a tenant is not, and must not be presented as if it were.** There is
+  no platform-administrator concept yet, so tenant creation cannot be authorized;
+  it exists only in development and test environments and is a 404 everywhere
+  else. A future phase replaces it with an authorized route rather than widening
+  this one.
 
 The database is real PostgreSQL when ``scripts/test-db.sh`` provides it (the
-persistence test), and the application itself is always the hermetic app from
-conftest.
+persistence tests), and the hermetic app from conftest covers validation.
 """
 
 from __future__ import annotations
@@ -48,18 +54,27 @@ def test_duplicate_slug_is_a_conflict(database_client: TestClient) -> None:
     assert response.json()["error"]["code"] == "conflict"
 
 
-def test_created_organization_can_be_read_back(database_client: TestClient) -> None:
+def test_created_organization_can_be_read_back(
+    database_client: TestClient, identity_factory, authenticate
+) -> None:
+    """A member reads their own tenant; the credential is what makes it theirs."""
     slug = f"read-{uuid.uuid4().hex[:8]}"
     created = database_client.post(PREFIX, json={"name": "Readable", "slug": slug}).json()
+    member = identity_factory(organization_id=uuid.UUID(created["id"]), role_code="viewer")
 
-    response = database_client.get(f"{PREFIX}/{created['id']}")
+    response = authenticate(member).get(f"{PREFIX}/{created['id']}")
 
     assert response.status_code == 200
     assert response.json()["slug"] == slug
 
 
-def test_unknown_organization_is_a_404(database_client: TestClient) -> None:
-    response = database_client.get(f"{PREFIX}/{uuid.uuid4()}")
+def test_unknown_organization_is_a_404(
+    database_client: TestClient, identity_factory, authenticate
+) -> None:
+    """An organization nobody belongs to is a 404, not an empty 200."""
+    member = identity_factory(role_code="owner")
+
+    response = authenticate(member).get(f"{PREFIX}/{uuid.uuid4()}")
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
@@ -89,7 +104,11 @@ def test_client_cannot_choose_its_own_status(client: TestClient) -> None:
 
 
 def test_organizations_routes_are_absent_outside_development_and_test() -> None:
-    """No unauthenticated tenant creation in staging or production."""
+    """No unauthenticated tenant creation in staging or production.
+
+    Protected reads stay available there — what disappears with the environment
+    is only the provisioning route that cannot be authorized yet.
+    """
     for environment in ("staging", "production"):
         settings = Settings(  # type: ignore[call-arg]  # remaining fields come from the environment
             database_url="postgresql+psycopg://aicore:aicore@127.0.0.1:1/aicore",
@@ -104,13 +123,16 @@ def test_organizations_routes_are_absent_outside_development_and_test() -> None:
 
 
 @pytest.mark.integration
-def test_persistence_survives_a_new_session(database_client: TestClient) -> None:
+def test_persistence_survives_a_new_session(
+    database_client: TestClient, identity_factory, authenticate
+) -> None:
     """The write is committed, not held in a request-scoped transaction."""
     slug = f"durable-{uuid.uuid4().hex[:8]}"
     created = database_client.post(PREFIX, json={"name": "Durable", "slug": slug}).json()
+    member = identity_factory(organization_id=uuid.UUID(created["id"]), role_code="owner")
 
     # A second request reads it back through a fresh session from the pool.
-    response = database_client.get(f"{PREFIX}/{created['id']}")
+    response = authenticate(member).get(f"{PREFIX}/{created['id']}")
 
     assert response.status_code == 200
     assert response.json()["name"] == "Durable"

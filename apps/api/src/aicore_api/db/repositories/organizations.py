@@ -19,6 +19,8 @@ shape:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from sqlalchemy import select
@@ -69,6 +71,15 @@ class OrganizationRepository:
         if organization is None:
             raise NotFoundError(f"organization {organization_id} was not found")
         return organization
+
+    def find(self, organization_id: uuid.UUID) -> Organization | None:
+        """Load one tenant by id; ``None`` when absent.
+
+        Used where "there is no such organization" is a normal outcome rather
+        than an error — notably by the authorization layer, which must answer a
+        non-member and an unknown tenant with the same 404.
+        """
+        return self._session.get(Organization, organization_id)
 
     def find_by_slug(self, slug: str) -> Organization | None:
         """Look a tenant up by slug; ``None`` when absent."""
@@ -121,6 +132,22 @@ class OrganizationScopedRepository:
         """
         with bind_tenant(self.organization_id):
             return self.session.execute(statement, **parameters)
+
+    @contextmanager
+    def writing(self) -> Iterator[Session]:
+        """Bind this repository's tenant around an ORM unit of work.
+
+        :meth:`execute` covers statements the caller composes, but a write is not
+        one: SQLAlchemy issues its ``INSERT``/``UPDATE`` at flush time, from
+        inside the session, so the tenant must be bound around the whole unit of
+        work rather than around a single call. Without this, the engine-level
+        guard refuses the flush (correctly — it cannot see a tenant) and a
+        legitimate write fails rather than being silently let through.
+
+        Use it as ``with repository.writing(): session.add(row); session.flush()``.
+        """
+        with bind_tenant(self.organization_id):
+            yield self.session
 
     def _scoped(self, model: Any) -> Any:
         """A ``SELECT`` over ``model`` already filtered to this repository's tenant.

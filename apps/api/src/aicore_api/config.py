@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     database_pool_size: Annotated[int, Field(ge=1, le=50)] = 5
     database_connect_timeout_seconds: Annotated[int, Field(ge=1, le=30)] = 5
 
+    # ── Authentication ───────────────────────────────────────────────────────
+    # Which provider validates credentials. Phase 2 ships bearer API tokens;
+    # adding an external identity provider (OIDC) means implementing the
+    # provider protocol and extending this list — the routes, dependencies and
+    # authorization code do not change, because none of them know how a
+    # principal was established. See docs/authentication.md.
+    auth_provider: Literal["api_token"] = "api_token"
+
     # ── VCS / deployment metadata (informational) ────────────────────────────
     git_commit: str | None = None
 
@@ -113,6 +121,7 @@ class Settings(BaseSettings):
             "cors_origins": len(self.cors_allow_origins),
             "database_configured": bool(self.database_url.get_secret_value()),
             "database_pool_size": self.database_pool_size,
+            "auth_provider": self.auth_provider,
         }
 
 

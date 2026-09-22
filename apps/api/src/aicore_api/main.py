@@ -26,11 +26,17 @@ logger = logging.getLogger(__name__)
 DESCRIPTION = """
 AICore is an enterprise AI control plane.
 
-**Phase 1 scope:** health endpoints, plus the PostgreSQL multi-tenancy foundation
-(organizations and tenant-scoped data access). Inventory, identity, policy,
-firewall, audit and intelligence features are still not implemented: there is no
-authentication, and the organization routes exist only in development and test
-environments.
+**Phase 2 scope:** health endpoints, the PostgreSQL multi-tenancy foundation, and
+the authentication and RBAC foundation on top of it — bearer API tokens identify
+a user, memberships bind them to an organization with a role, and routes
+authorize against the explicit permissions that role grants.
+
+Every tenant-scoped route resolves the caller's membership in the organization in
+its path before it runs. AI inventory, the policy engine, the action firewall,
+audit records, incidents and intelligence features are still not implemented, and
+no endpoint pretends otherwise. Tenant creation remains a development/test
+provisioning path: this phase has no platform-administrator concept that could
+authorize it.
 """
 
 
@@ -70,10 +76,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "description": "Liveness and readiness probes for orchestrators and monitoring.",
             },
             {
+                "name": "identity",
+                "description": (
+                    "The authenticated caller: who they are, the organizations they "
+                    "belong to, the role they hold and the permissions it grants."
+                ),
+            },
+            {
                 "name": "organizations",
                 "description": (
-                    "Tenant persistence, exposed in development and test environments only. "
-                    "Authorization arrives with identity in a later phase."
+                    "Tenant reads, authorized by membership and permission. Tenant "
+                    "creation remains development/test only, because it cannot be "
+                    "authorized until a platform-administrator concept exists."
                 ),
             },
         ],

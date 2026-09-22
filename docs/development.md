@@ -71,6 +71,17 @@ bash scripts/migrate.sh current           # applied revision
 bash scripts/migrate.sh check             # fail if models and the schema disagree
 bash scripts/migrate.sh downgrade -1      # reverse one revision
 bash scripts/migrate.sh revision --autogenerate -m "add x"   # author one (review it)
+
+# Provisioning identities (authentication, Phase 2)
+#   There is no sign-up route and no user-management API: credentials are created
+#   out of band, by an operator with database access, and printed exactly once.
+bash scripts/py.sh -m aicore_api.cli bootstrap \
+  --email owner@example.com --full-name "Ada Lovelace" \
+  --organization-name "Acme Corporation" --organization-slug acme
+bash scripts/py.sh -m aicore_api.cli create-api-token --email owner@example.com --name laptop
+bash scripts/py.sh -m aicore_api.cli add-member --organization acme --email analyst@example.com --role analyst
+
+curl -H "Authorization: Bearer <printed token>" http://127.0.0.1:8000/me
 ```
 
 ## Configuration
@@ -82,6 +93,7 @@ Every variable is documented in `.env.example`. The essentials:
 | `POSTGRES_*` | Compose `db` | credentials have no defaults in Compose |
 | `AICORE_DATABASE_URL` | API | required; PostgreSQL only; never logged or returned |
 | `AICORE_ENVIRONMENT` | API | `production` tightens validation (no debug, no wildcard CORS) |
+| `AICORE_AUTH_PROVIDER` | API | credential provider (`api_token` today); routes never name one |
 | `API_INTERNAL_URL` | web (server-side) | where the web tier reaches the API |
 | `API_REQUEST_TIMEOUT_MS` | web | 250–30000, default 4000 |
 | `NEXT_PUBLIC_*` | web (browser) | anything here is public — never credentials |

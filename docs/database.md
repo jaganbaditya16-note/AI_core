@@ -1,9 +1,13 @@
-# Database and multi-tenancy (Phase 1)
+# Database and multi-tenancy (Phases 1–2)
 
-Phase 1 adds the PostgreSQL foundation and the tenant boundary that every later
-phase builds on. It adds **one** table. Agents, models, tools, data sources,
-policies, events and incidents do not exist yet — what exists is the set of
-conventions and the isolation mechanism they will inherit.
+Phase 1 added the PostgreSQL foundation and the tenant boundary every later phase
+builds on. Phase 2 adds the identity and access tables that turn that boundary
+into something a user can actually be authorized inside: **users, roles,
+permissions, role-permission grants, memberships and API tokens**.
+
+Agents, models, tools, data sources, policies, events and incidents still do not
+exist. What exists is the set of conventions and the isolation mechanism they will
+inherit — plus, now, the callers who will reach them.
 
 ## The tenant model
 
@@ -106,6 +110,38 @@ CREATE POLICY tenant_isolation ON aicore.<table>
 No call site changes. Until then, `alembic check` and the isolation tests are
 what keep the boundary honest.
 
+## Identity and access tables (Phase 2)
+
+Phase 2 extends the schema only as far as authentication and authorization
+require. The distinction that shapes the design: a **user is global, a membership
+is tenant-owned**.
+
+| Table | Kind | Why |
+|---|---|---|
+| `users` | global | A person exists independently of any tenant and can belong to several. Email is unique and normalized (lowercased, trimmed) by CHECK; status is `active` \| `suspended`. **No credential is stored** — not a password, not a hash of one. |
+| `roles` | reference data | The six roles, each with a code, name and description. Not tenant-owned: the catalog describes what the application can enforce, and every organization sees the same one. |
+| `permissions` | reference data | The eight explicit permissions, with a machine-checked code format (dotted lowercase). |
+| `role_permissions` | reference data | The grant table: role × permission, `ON DELETE CASCADE` from the role (a grant to a role that no longer exists means nothing) and `ON DELETE RESTRICT` to the permission (removing a granted permission would silently strip a capability from roles that advertise it). |
+| `memberships` | **tenant-owned** | `(organization_id, user_id)` unique, `organization_id` → `organizations` RESTRICT, `user_id` → `users` CASCADE, `role_id` → `roles` RESTRICT, status `active` \| `suspended`. This row *is* the grant: it is what makes a person a member of one tenant with one role. |
+| `api_tokens` | global | Bearer credentials: `user_id` CASCADE, unique `token_hash` (SHA-256 hex — the plaintext is never stored), `token_prefix` for human recognition, `expires_at`, `revoked_at`. |
+
+Only `memberships` is tenant-owned, and it is the only table the tenant guard has
+to protect for authorization purposes — which is why "which organizations does
+this user belong to?" is the single question that needs a
+[documented cross-tenant read](../apps/api/src/aicore_api/db/repositories/memberships.py).
+
+Roles and permissions are **seeded by migration `0002_identity_and_rbac`**, in the
+same revision that creates the tables: a deployment must not start with an empty
+catalog, because every route's requirement is resolved through it. The migration
+inserts the grants with bound parameters and the code catalog
+(`aicore_api/core/permissions.py`) is compared against the live rows by
+`tests/test_migrations.py`, so the two copies of the policy — code and seed —
+cannot drift.
+
+Role codes and permission codes are validated with a CHECK constraint as well as
+in the model, so a malformed code cannot be introduced by a hand-written
+`INSERT` either. Full design: [authentication.md](authentication.md).
+
 ## Migrations
 
 Alembic, as a **dev dependency** (`apps/api/pyproject.toml`). The API runtime
@@ -117,6 +153,7 @@ alembic.ini                     # no URL in it: credentials come from the enviro
 database/migrations/env.py      # reads AICORE_DATABASE_URL through the app's settings
 database/migrations/versions/
   0001_organizations.py         # Phase 1: schema + tenant root
+  0002_identity_and_rbac.py     # Phase 2: users, roles, permissions, grants, memberships, tokens
 ```
 
 ```bash
@@ -135,6 +172,15 @@ development and are now covered by tests:
   without an error.
 - `script_location` and `prepend_sys_path` use `%(here)s`, so migrations work
   from any working directory.
+- Autogenerate compares foreign keys literally, so reflection and the models must
+  agree on whether a constraint's target is schema-qualified. They agree only when
+  the *connection* has no default schema: connecting as a role whose name matches
+  the application schema makes PostgreSQL's implicit `"$user"` put `aicore` first
+  in `search_path`, reflection then reports FK targets unqualified, and `alembic
+  check` sees every constraint as both added and removed. `env.py` therefore pins
+  an empty `search_path` for migration connections — the objects are always named
+  explicitly, so nothing depends on it — which keeps the drift check meaningful
+  for every operator regardless of their role's defaults.
 
 Rules: one concern per revision, every revision states its downgrade, no
 unreviewed `--autogenerate` output, credentials never written into `alembic.ini`
@@ -153,10 +199,16 @@ bash scripts/test-db.sh     # real PostgreSQL: migrate from scratch, drift check
 |---|---|
 | `test_tenant_isolation.py` | unscoped and unfiltered statements are refused; a tenant-scoped repository cannot be built without a tenant; tenant A cannot read tenant B's rows; unknown tenants are rejected by the foreign key |
 | `test_organizations.py` | persistence, uniqueness, defaults, CHECK constraints, `ON DELETE RESTRICT`, no tenant data in `repr` |
-| `test_migrations.py` | revision head, downgrade present, models match the migrated schema, constraint names match, no extra tables |
-| `test_organizations_api.py` | the minimal HTTP persistence path, and that it is absent outside development/test |
+| `test_migrations.py` | revision head, downgrade present, models match the migrated schema, constraint names match, the exact table set, and that the seeded catalog equals the catalog in code |
+| `test_organizations_api.py` | the minimal HTTP persistence path (now authorized), and that tenant creation is absent outside development/test |
+| `test_authentication.py` | tokens are random, hashed, bounded and read only from the header; revoked, expired and suspended credentials stop working |
+| `test_identity_api.py` | `GET /me`: identity, every membership with its role and permissions, uniform 401s, no credential echoed |
+| `test_authorization.py` | the permission matrix over HTTP, cross-tenant refusal, IDOR attempts, the declared-permission structural check, and that no handler branches on a role name |
+| `test_cli.py` | the provisioning CLI produces a token that authenticates over HTTP |
 
-`tests/tenant_fixture.py` declares a **test-only** tenant-owned table. Phase 1
-ships no domain table, so there would otherwise be nothing to test the boundary
-with; the fixture inherits the real mixin and lives on its own metadata, so it
-can never appear in a migration or in production.
+`tests/tenant_fixture.py` declares a **test-only** tenant-owned table: no domain
+table exists yet, so there would otherwise be nothing to test the boundary with.
+The fixture inherits the real mixin and lives on its own metadata, so it can never
+appear in a migration or in production. `tests/identity_fixture.py` does the same
+job for Phase 2: it provisions committed users, memberships and tokens so
+authenticated requests can be tested end to end, and removes them afterwards.

@@ -28,6 +28,15 @@ Three mechanisms, layered:
 4. **The scope is auditable.** :func:`current_tenant` reports whether a tenant is
    bound, so a caller (or a test) can assert it rather than assume it.
 
+5. **Cross-tenant reads are possible, but only out loud.**
+   :func:`cross_tenant_read` is the single, deliberately awkward way to read
+   tenant-owned rows without a tenant binding. It applies to ``SELECT`` only,
+   requires the caller to state a reason, and exists for operations that are
+   cross-tenant *by nature* — enumerating the organizations one authenticated
+   user belongs to. One call site uses it
+   (:func:`aicore_api.db.repositories.memberships.memberships_for_user`), so
+   ``grep -rn cross_tenant_read`` lists everything that can see across tenants.
+
 Binding is explicit and request-scoped, never global: the tenant lives in a
 :class:`contextvars.ContextVar` set by whoever owns the unit of work — a test or
 script today, the authentication dependency in a later phase — and reset in a
@@ -71,6 +80,8 @@ __all__ = [
     "TenantOwnershipError",
     "TenantScopeError",
     "bind_tenant",
+    "cross_tenant_read",
+    "cross_tenant_reason",
     "current_tenant",
     "register_metadata",
     "tenant_owned_tables",
@@ -80,9 +91,29 @@ __all__ = [
 #: Column whose presence defines the tenant boundary.
 TENANT_COLUMN = "organization_id"
 
+#: Leading whitespace and SQL comments, so the first *keyword* of a raw
+#: statement can be read without writing a parser.
+_SQL_PROLOGUE = re.compile(r"^(?:\s+|--[^\n]*\n?|/\*.*?\*/)+", re.DOTALL)
+
+#: Statement keywords that are schema management rather than data access. An
+#: allow-list on purpose: `WITH` (a data query), `TRUNCATE` (a data destruction)
+#: and anything unrecognised stay under the guard, so being wrong here fails
+#: closed. ``SET``/``RESET`` cover session settings such as ``search_path``, and
+#: ``ANALYZE``/``VACUUM`` are maintenance run by an operator, never by a request.
+_DDL_KEYWORDS = frozenset(
+    {"ALTER", "ANALYZE", "COMMENT", "CREATE", "DROP", "GRANT", "RESET", "REVOKE", "SET", "VACUUM"}
+)
+
 #: Bound by whoever owns the unit of work. ``None`` means "no tenant context":
 #: valid for migrations, DDL and health probes; blocked for tenant-owned tables.
 _current_tenant: ContextVar[uuid.UUID | None] = ContextVar("aicore_current_tenant", default=None)
+
+#: Set by :func:`cross_tenant_read` to the reason a caller gave. Holding a
+#: non-empty string is what permits the guard to allow an unfiltered, unbound
+#: read of tenant-owned rows — never a write.
+_cross_tenant_reason: ContextVar[str | None] = ContextVar(
+    "aicore_cross_tenant_reason", default=None
+)
 
 #: Metadata scanned for tenant-owned tables. The application's metadata is always
 #: included; the test suite registers its own fixture metadata so the isolation
@@ -150,6 +181,20 @@ def _tables_via_iteration(statement: ClauseElement) -> set[str] | None:
     return names
 
 
+def _is_ddl_text(sql: str) -> bool:
+    """Whether a raw statement is schema management rather than data access.
+
+    Needed because raw SQL arrives as an opaque string: ``text("COMMENT ON TABLE
+    ... memberships ...")`` mentions a tenant-owned table without touching a
+    single row, and migrations legitimately run with no tenant bound. Only a
+    known DDL keyword exempts a statement — everything else, including a CTE,
+    is treated as data access.
+    """
+    stripped = _SQL_PROLOGUE.sub("", sql, count=1)
+    keyword = stripped.split(None, 1)[0].upper() if stripped else ""
+    return keyword.rstrip(";") in _DDL_KEYWORDS
+
+
 def _mentions_tenant_column(statement: Executable) -> bool:
     """Whether a statement filters on the tenant column.
 
@@ -183,10 +228,13 @@ def _references_tenant_owned(statement: Executable) -> bool:
       names, which is stricter than parsing it and the safe direction to be wrong
       in, since hand-written SQL is the realistic leak path.
 
-    **DDL is deliberately exempt.** ``CREATE``/``ALTER``/``DROP`` are schema
-    management performed by reviewed migrations, which necessarily run without a
-    tenant (there is no tenant in a schema change). Blocking them would make the
-    guard break Alembic rather than protect a boundary. Reflection queries are
+    **DDL is deliberately exempt.** ``CREATE``/``ALTER``/``DROP``/``COMMENT`` are
+    schema management performed by reviewed migrations, which necessarily run
+    without a tenant (there is no tenant in a schema change). Blocking them would
+    make the guard break Alembic rather than protect a boundary — and a migration
+    that adds a column to a tenant-owned table must be able to run at all. Raw SQL
+    is recognised as DDL by its first keyword (:func:`_is_ddl_text`), which is an
+    allow-list, so an unrecognised statement stays guarded. Reflection queries are
     exempt for the same reason: they read the catalog, not tenant data.
 
     Anything that cannot be inspected counts as tenant-data access (fail closed).
@@ -196,6 +244,8 @@ def _references_tenant_owned(statement: Executable) -> bool:
         return False
 
     if isinstance(statement, TextClause):
+        if _is_ddl_text(statement.text):
+            return False
         return any(re.search(rf"\b{re.escape(name)}\b", statement.text) for name in owned)
 
     if isinstance(statement, (Insert, Update, Delete)):
@@ -236,6 +286,10 @@ def _enforce_tenant_scope(
 
     tenant_id = current_tenant()
     if _references_tenant_owned(clauseelement):
+        # The one escape: a read that is cross-tenant by nature, taken out loud
+        # via cross_tenant_read(reason). Writes are never permitted through it.
+        if isinstance(clauseelement, Select) and cross_tenant_reason() is not None:
+            return clauseelement, multiparams, params
         if tenant_id is None:
             raise TenantScopeError(
                 "refusing to execute a statement against tenant-owned tables without a "
@@ -253,6 +307,42 @@ def _enforce_tenant_scope(
     # replaces them, so returning fresh empties would silently drop every bind
     # parameter of every statement in the process.
     return clauseelement, multiparams, params
+
+
+def cross_tenant_reason() -> str | None:
+    """The reason a cross-tenant read is in progress, if one is.
+
+    ``None`` means the guard is fully in force. Reading this never raises.
+    """
+    return _cross_tenant_reason.get()
+
+
+@contextmanager
+def cross_tenant_read(reason: str) -> Iterator[str]:
+    """Permit ``SELECT``s against tenant-owned tables without a tenant binding.
+
+    For the small set of operations that are cross-tenant *by nature* — "which
+    organizations does this authenticated user belong to?" cannot be answered
+    from inside one organization. The reasons this is safe to have at all:
+
+    - it must be asked for in code, by name, with a stated reason;
+    - it applies to reads only: a write on tenant-owned data still requires a
+      bound tenant and a tenant filter, so no mutation can hide behind it;
+    - the row filter becomes the caller's responsibility, which is why the only
+      caller filters on the *authenticated principal's* user id, never on
+      anything taken from the request.
+
+    Misuse is visible in review and by ``grep``, which is the point: a scanner
+    that can never be escaped gets worked around, while a named exception with
+    one call site can be audited.
+    """
+    if not reason.strip():
+        raise ValueError("cross_tenant_read requires a reason")
+    token = _cross_tenant_reason.set(reason)
+    try:
+        yield reason
+    finally:
+        _cross_tenant_reason.reset(token)
 
 
 def current_tenant() -> uuid.UUID | None:

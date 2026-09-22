@@ -1,10 +1,11 @@
 # Phase 0 scope
 
 > **Status:** this document is the contract Phase 0 was built against and is kept
-> as the record of that phase. Phase 1 has since added what it reserved: the
-> tenant root, the multi-tenancy conventions and the Alembic migrations. See
-> [database.md](database.md) for the current state; authentication, RBAC and the
-> remaining domain tables are still not implemented.
+> as the record of that phase. Later phases have since added what it reserved:
+> Phase 1 the tenant root, the multi-tenancy conventions and the Alembic
+> migrations ([database.md](database.md)); Phase 2 the identity and RBAC layer
+> ([authentication.md](authentication.md)). The remaining domain tables — agents,
+> models, tools, policies, events, incidents — are still not implemented.
 
 Phase 0 builds the **foundation** of AICore. This document is the contract for
 what is and is not in the repository at this point.
@@ -29,8 +30,10 @@ Nothing below exists in this repository, not even as a stub. Anything that
 looked like a fake version of these would be worse than nothing, because it
 would misrepresent the security posture of the system.
 
-**Identity & access:** authentication, login, sessions, RBAC, organizations,
-tenants, users, API keys.
+**Identity & access:** sign-up, login, sessions, password recovery, invitation
+flows, SSO/OIDC providers. (Phase 2 provisions identities out of band instead —
+see [authentication.md](authentication.md) — and Phase 1 added tenants, so the
+absences here are the *user-facing* identity features, not the data model.)
 
 **Inventory & discovery:** agent registry, model registry, tool registry, AI
 inventory, dependency graph, shadow-AI detection, agent identity, AI

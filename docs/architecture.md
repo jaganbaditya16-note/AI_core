@@ -39,6 +39,32 @@ tenant is resolved. Phase 1 deliberately does **not** enable Row Level Security 
 it prepares for it (see the design note in `database.md`) rather than adding a
 policy that is not yet enforceable.
 
+## What Phase 2 adds
+
+Identity and access control, on top of the tenant boundary: users, roles,
+permissions, memberships and API tokens, plus the authorization flow that turns
+"a request arrived" into "this person may do this here".
+
+```
+credential ─► identify user ─► resolve organization ─► verify membership
+            ─► resolve role ─► resolve permissions ─► check required permission ─► handler
+                                    ▲
+                          the catalog (core/permissions.py, seeded by migration 0002)
+```
+
+Two structural decisions carry the security argument. First, a route states its
+requirement in its signature (`Depends(require_permission(Permission.USER_READ))`)
+rather than inside its body, so no handler can forget to authorize and the whole
+surface is reviewable in one file. Second, the organization always comes from the
+request path and the caller always from the credential — there is no
+client-settable "current organization" to abuse, which is what makes a
+cross-tenant request fail as a `404` indistinguishable from an unknown id.
+
+Credentials are provisioned out of band (`python -m aicore_api.cli`), never over
+HTTP: there is no sign-up route to attack, no password stored anywhere, and
+nothing that behaves differently in development than in production. Design and
+rationale: [authentication.md](authentication.md).
+
 ## What Phase 0 actually is
 
 A foundation: an application skeleton, a versioned API contract, a database
@@ -131,11 +157,17 @@ reshape these boundaries.
 | PostgreSQL only (no SQLite fallback) | matches the target system; avoids behaviour drift between dev and prod | local dev needs PostgreSQL (Docker or `scripts/dev-db.sh`) |
 | Redis deliberately absent | not needed in Phase 0; adding it now would be speculative | readiness has one dependency instead of two |
 
-## Security posture in Phase 0
+## Security posture
 
-- No authentication or authorization exists — and none is faked. There are no
-  protected routes to protect: the surface is two health endpoints and a static
-  page.
+- **Authentication and authorization are server-side.** Bearer tokens (stored
+  only as hashes) identify a user; memberships and explicit permissions authorize
+  the request. The frontend is never the security boundary, and no check exists
+  only in the UI.
+- **No passwords exist to leak**, and no credential is issued over HTTP. The only
+  path to a token is the operator CLI, and it is shown exactly once.
+- **Refusals leak nothing**: an inaccessible tenant answers `404` — the same as a
+  tenant that does not exist — and every authentication failure answers an
+  identical `401`.
 - No secrets in code or in git; `scripts/check-secrets.sh` enforces this in CI.
 - Database credentials are never sent to the browser or into the web image.
 - Error responses never include internal details; unexpected exceptions are
@@ -145,8 +177,10 @@ reshape these boundaries.
 
 ## What later phases add here
 
-1. Identity, tenants, RBAC — first domain tables, first migrations.
-2. Inventory (agents, models, tools, dependencies) + discovery.
+1. ~~Identity, tenants, RBAC~~ — **tenants in Phase 1, identity and RBAC in
+   Phase 2**.
+2. Inventory (agents, models, tools, dependencies) + discovery — with the
+   permissions that govern them, added to the same catalog.
 3. Policy engine and action firewall (deterministic decisions).
 4. Audit, monitoring, anomalies, incidents.
 5. Intelligence layer (Nemotron / Nebius) as an *advisor* that proposes; the

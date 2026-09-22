@@ -41,6 +41,7 @@ from aicore_api.db import tenancy  # noqa: E402
 from aicore_api.db.base import APP_SCHEMA  # noqa: E402
 from aicore_api.db.session import dispose_engine  # noqa: E402
 from aicore_api.main import create_app  # noqa: E402
+from identity_fixture import Identity, IdentityFactory  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
 
 # The fixture table is registered with the isolation guard for the whole session,
@@ -151,6 +152,43 @@ def database_client(
     finally:
         dispose_engine()
         get_settings.cache_clear()
+
+
+# ── Phase 2: identities, roles and credentials ───────────────────────────────
+#
+# An authenticated request needs a real user, a real membership and a real token,
+# because that is what production will use. provision_identity() writes all three
+# — committed — and the factory below deletes them again afterwards.
+
+
+@pytest.fixture
+def identity_factory(integration_engine: Engine) -> Iterator[IdentityFactory]:
+    """Provision identities, then remove all of them.
+
+    Cleanup is dependency-ordered inside ``IdentityFactory.purge`` — memberships
+    and credentials before the tenants they reference — so a test may put one
+    person into another identity's organization.
+    """
+    factory = IdentityFactory(integration_engine)
+    try:
+        yield factory
+    finally:
+        factory.purge()
+
+
+@pytest.fixture
+def authenticate(database_client: TestClient):
+    """Send requests as a provisioned identity.
+
+    Returns the client with an ``Authorization`` header attached, so a test reads
+    like the call it is making: ``authenticate(identity).get("/me")``.
+    """
+
+    def attach(identity: Identity) -> TestClient:
+        database_client.headers["Authorization"] = f"Bearer {identity.token}"
+        return database_client
+
+    return attach
 
 
 @pytest.fixture

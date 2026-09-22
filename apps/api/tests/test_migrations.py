@@ -17,20 +17,27 @@ from __future__ import annotations
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, inspect, text
+from sqlalchemy.orm import Session
 
+from aicore_api.core.permissions import ROLE_PERMISSIONS, Permission
 from aicore_api.db.base import APP_SCHEMA, Base
 from aicore_api.db.models.organization import Organization
+from aicore_api.db.repositories.rbac import RoleCatalog
 
 CONFIG = Config("alembic.ini")
-EXPECTED_REVISION = "0001_organizations"
+EXPECTED_REVISION = "0002_identity_and_rbac"
+#: Oldest first: each revision's ``down_revision`` must be the one before it.
+EXPECTED_CHAIN = ["0001_organizations", "0002_identity_and_rbac"]
 
 
 def test_migration_revision_is_the_expected_head() -> None:
-    """One revision, named for what it does; a second one must be a review decision."""
+    """The head is named for what it does; another revision is a review decision."""
     script = ScriptDirectory.from_config(CONFIG)
 
     assert script.get_current_head() == EXPECTED_REVISION
-    assert [revision.revision for revision in script.walk_revisions()] == [EXPECTED_REVISION]
+    assert [revision.revision for revision in reversed(list(script.walk_revisions()))] == (
+        EXPECTED_CHAIN
+    )
 
 
 def test_every_migration_states_a_real_downgrade() -> None:
@@ -123,13 +130,14 @@ def test_the_tenant_boundary_is_enforced_in_the_database(
     assert sample_fks[0]["constrained_columns"] == ["organization_id"]
 
 
-def test_only_organizations_is_part_of_the_application_schema(
+def test_the_application_schema_is_exactly_what_the_models_declare(
     integration_engine: Engine,
 ) -> None:
-    """Phase 1 ships exactly one application table.
+    """Seven tables: the tenant registry plus Phase 2's identity and RBAC tables.
 
-    The models, the migration and the live database must agree on that — this is
-    the assertion that keeps a domain table from arriving unnoticed.
+    The models, the migrations and the live database must agree on that set — this
+    is the assertion that keeps a table from arriving unnoticed, and the reason
+    "we will add the table later" cannot quietly become a schema change.
     """
     inspector = inspect(integration_engine)
     # The session-scoped tenant fixture may be present while the suite runs; it is
@@ -142,9 +150,41 @@ def test_only_organizations_is_part_of_the_application_schema(
         - {TEST_FIXTURE_TABLE}
     )
 
-    assert live == {"organizations"}
-    assert {table.name for table in Base.metadata.tables.values()} == {"organizations"}
+    expected = {
+        "organizations",
+        "users",
+        "roles",
+        "permissions",
+        "role_permissions",
+        "memberships",
+        "api_tokens",
+    }
+    assert live == expected
+    assert {table.name for table in Base.metadata.tables.values()} == expected
     assert TEST_FIXTURE_TABLE not in Base.metadata.tables
+
+
+def test_the_migration_seeds_the_catalog_the_code_declares(
+    integration_session: Session,
+) -> None:
+    """The role/permission catalog exists twice: as code and as a seeded migration.
+
+    The migration has to seed it (a deployment must not start with an empty
+    catalog), and ``aicore_api.core.permissions`` has to state it (tests and
+    application code need it without a database). Both copies are therefore
+    compared against the live rows here: change one without the other and this
+    fails, rather than a role silently losing a capability in production.
+    """
+    catalog = RoleCatalog(integration_session)
+    seeded = catalog.grants_by_role_code()
+
+    assert set(seeded) == set(ROLE_PERMISSIONS), "a role exists in one place only"
+    for role_code, granted in seeded.items():
+        expected = {permission.value for permission in ROLE_PERMISSIONS[role_code]}
+        assert granted == expected, f"{role_code} grants {granted}, the code says {expected}"
+    assert {row.code for row in catalog.list_permissions()} == {
+        permission.value for permission in Permission
+    }
 
 
 def test_an_unmigrated_database_is_detected(integration_engine: Engine) -> None:

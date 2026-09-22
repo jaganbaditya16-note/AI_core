@@ -1,9 +1,14 @@
 /**
  * Shared API contract types.
  *
- * Phase 0 exposes exactly one contract surface: the health endpoints and the
- * common error envelope. Domain contracts (AI inventory, policy, identity,
- * audit) are intentionally NOT defined yet — they belong to later phases.
+ * The published surface covers exactly what the API serves: health endpoints,
+ * the common error envelope, the organization (tenant) contract, and — since
+ * Phase 2 — the identity contract (who the caller is, which organizations they
+ * belong to, what role they hold and what it grants).
+ *
+ * Domain contracts for AI inventory, policy, the action firewall, audit records
+ * and incidents are intentionally NOT defined: those phases are not implemented,
+ * and a type published now would be a promise this build does not keep.
  *
  * These types mirror the Pydantic models in `apps/api/src/aicore_api/schemas/`.
  * A backend test (`tests/test_openapi_contract.py`) asserts the two stay aligned.
@@ -73,6 +78,98 @@ export interface Organization {
 export interface OrganizationCreate {
   name: string;
   slug: string;
+}
+
+/* ── Identity and access (Phase 2) ───────────────────────────────────────── */
+
+/**
+ * Lifecycle of a person. `suspended` cannot authenticate; the database
+ * constrains these values, so an unknown string is a bug rather than a state.
+ */
+export type UserStatus = "active" | "suspended";
+
+/** Lifecycle of a membership: a suspended grant carries no permissions. */
+export type MembershipStatus = "active" | "suspended";
+
+/** A person, as the API describes them. No credential field exists, by design. */
+export interface User {
+  id: string;
+  email: string;
+  full_name: string;
+  status: UserStatus;
+}
+
+/** The tenant a membership belongs to. */
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  status: OrganizationStatus;
+}
+
+/** A role, without its permission set (that is a catalog fact, not a grant). */
+export interface RoleSummary {
+  code: string;
+  name: string;
+}
+
+/**
+ * One of the caller's memberships.
+ *
+ * `permissions` is empty when the membership is not active: a suspended grant
+ * must never be readable as usable.
+ */
+export interface Membership {
+  organization: OrganizationSummary;
+  role: RoleSummary;
+  status: MembershipStatus;
+  permissions: string[];
+}
+
+/** `GET /me` — the authenticated caller and every organization they belong to. */
+export interface MeResponse {
+  user: User;
+  memberships: Membership[];
+}
+
+/** One member of an organization, as seen from inside that organization. */
+export interface Member {
+  user: User;
+  role: RoleSummary;
+  status: MembershipStatus;
+  created_at: string;
+}
+
+/** `GET /organizations/{organization_id}/members`. */
+export interface MemberListResponse {
+  organization_id: string;
+  members: Member[];
+}
+
+/** A role and the permissions it grants. */
+export interface Role {
+  code: string;
+  name: string;
+  description: string;
+  permissions: string[];
+}
+
+/** `GET /organizations/{organization_id}/roles`. */
+export interface RoleListResponse {
+  organization_id: string;
+  roles: Role[];
+}
+
+/** One capability the application knows how to check. */
+export interface Permission {
+  code: string;
+  description: string;
+}
+
+/** `GET /organizations/{organization_id}/permissions`. */
+export interface PermissionListResponse {
+  organization_id: string;
+  permissions: Permission[];
 }
 
 /* ── Errors ──────────────────────────────────────────────────────────────── */

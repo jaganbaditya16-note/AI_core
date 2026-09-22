@@ -1,8 +1,10 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 1: database and
-multi-tenancy foundation**. Phase 0 delivered the skeleton; Phase 1 adds the
-PostgreSQL schema conventions and the tenant boundary.
+**Enterprise AI Control Plane** — currently at **Phase 2: authentication and
+RBAC**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL schema and tenant
+boundary, and Phase 2 the identity layer on top of it: bearer tokens identify a
+user, memberships bind them to an organization with a role, and protected routes
+authorize against the explicit permissions that role grants.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -56,14 +58,15 @@ apps/
     src/lib/            server-only config + health client
     src/components/     health panel, motion wrapper
   api/                  FastAPI backend
-    src/aicore_api/     main · config · api · core · db · schemas
+    src/aicore_api/     main · config · cli · api · auth · core · db · schemas
     tests/              Pytest suite (unit + PostgreSQL integration)
 packages/
-  types/                shared API contract types (health, errors)
+  types/                shared API contract types (health, errors, organizations, identity)
 database/
   init/                 one-time bootstrap SQL (schema namespace only)
   migrations/           Alembic environment and revisions
     versions/0001_organizations.py
+    versions/0002_identity_and_rbac.py
 tests/e2e/              Playwright smoke tests
 docs/                   architecture, scope, development guide, ADRs
 infrastructure/         docker-compose.yml
@@ -125,6 +128,7 @@ credentials.
 | `AICORE_DATABASE_URL` | API → PostgreSQL (**required**, PostgreSQL-only, never logged) |
 | `AICORE_ENVIRONMENT` / `AICORE_DEBUG` / `AICORE_LOG_LEVEL` | runtime mode; `production` rejects debug and wildcard CORS |
 | `AICORE_CORS_ALLOW_ORIGINS` | empty by default (same-origin proxy) |
+| `AICORE_AUTH_PROVIDER` | credential provider; `api_token` today, external identity providers later |
 | `API_INTERNAL_URL` | server-side address the web tier uses to reach the API |
 | `API_REQUEST_TIMEOUT_MS` | backend request timeout (250–30000 ms) |
 | `NEXT_PUBLIC_API_URL` | optional fallback; anything `NEXT_PUBLIC_*` is public |
@@ -156,17 +160,50 @@ carries `X-Request-ID`.
 
 ## Current limitations
 
-- **No authentication or authorization** — by design; there are no protected
-  routes to protect. Nothing is faked either.
-- **No domain tables beyond the tenant root.** The database contains
-  `aicore.organizations` and nothing else; the agent, model, tool, policy, event
-  and incident tables arrive in later phases, through migrations.
+- **No sign-up, login or session management.** Credentials are provisioned out of
+  band with the CLI (see below); there is no password anywhere in AICore, and the
+  frontend is never a security boundary.
+- **No user-management API.** Adding members and issuing tokens is an operator
+  action. `POST /organizations` remains a development/test provisioning route
+  (404 everywhere else), because this phase has no platform-administrator concept
+  that could authorize tenant creation.
+- **No permissions for resources that do not exist.** `audit.read` and
+  `security.read` are part of the catalog and appear on `GET /me`, but there is no
+  audit trail or security finding to read yet — no route pretends otherwise.
+- **No domain tables beyond the tenant root and the identity tables.** The agent,
+  model, tool, policy, event and incident tables arrive in later phases, through
+  migrations.
 - **No AI features.** No model provider is integrated; no agent/model/tool
   inventory, policy engine, firewall, audit, monitoring or incidents.
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
+
+## What Phase 2 adds
+
+Identity and access control, enforced by the server:
+
+- **Authentication** — bearer API tokens, stored only as SHA-256 hashes, read from
+  the `Authorization` header only, revocable and expirable. Credentials are issued
+  by `python -m aicore_api.cli`, never over HTTP, and there is no
+  development-only authentication path.
+- **Roles and permissions** — six roles (`owner`, `admin`, `security_admin`,
+  `ai_admin`, `analyst`, `viewer`) built from eight explicit permissions. Code asks
+  for a permission, never for a role name, so privilege changes happen in one
+  catalog rather than in route handlers.
+- **Authorization** — every tenant-scoped route resolves the caller's membership
+  in the organization named in the path and checks one required permission before
+  the handler runs: `authenticate → identify → resolve organization → verify
+  membership → resolve role → resolve permissions → authorize`.
+- **Tenant isolation under authentication** — a member of one organization gets
+  the same `404` for another organization as for one that does not exist, so
+  access refusals leak neither data nor existence.
+- **API** — `GET /me` (who am I, which organizations, which roles, which
+  permissions) and the authorized organization reads (`GET /organizations/{id}`,
+  `/members`, `/roles`, `/permissions`). No more than the phase needs.
+
+Design and rationale: [docs/authentication.md](docs/authentication.md).
 
 ## What Phase 1 adds
 
@@ -193,12 +230,13 @@ Design and rationale: [docs/database.md](docs/database.md).
 
 ## Future phases (high level)
 
-1. ~~Identity, tenants~~ — **tenants landed in Phase 1**; identity and RBAC
-   remain (Phase 1 deliberately ships no authentication, so the tenant boundary
-   is currently enforced by the data layer, not by a user identity).
-2. Discovery and inventory: agents, models, tools, dependencies, shadow AI.
-3. Control: permissions, policy engine, action firewall, approvals, kill switch.
-4. Monitoring: behaviour, anomalies, cost, audit, incidents.
+1. ~~Tenants~~ — **Phase 1**. ~~Users, roles, permissions, membership
+   enforcement~~ — **Phase 2**.
+2. Discovery and inventory: agents, models, tools, dependencies, shadow AI — and
+   the permissions that govern them (no such permission exists yet, deliberately).
+3. Control: policy engine, action firewall, approvals, kill switch.
+4. Monitoring: behaviour, anomalies, cost, audit, incidents (making `audit.read`
+   and `security.read` mean something).
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic
    decisions.
 

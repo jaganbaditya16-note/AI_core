@@ -21,7 +21,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from pydantic import ValidationError
-from sqlalchemy import create_engine, pool, text
+from sqlalchemy import create_engine, make_url, pool, text
 from sqlalchemy.engine import Connection
 
 # Importing the models package registers every table on Base.metadata; importing
@@ -75,6 +75,35 @@ def _include_object(
     return not (type_ == "table" and name == "alembic_version")
 
 
+#: A migration connection resolves nothing by search_path: AICore objects are
+#: always named explicitly (``aicore.memberships``), and the bootstrap DDL below
+#: is schema-qualified too.
+#:
+#: This is not only tidiness. Autogenerate reflects the live schema and compares
+#: it with the models, and the two only agree when the connection has *no*
+#: default schema. If it has one — connecting as a role whose name matches the
+#: application schema, where PostgreSQL's implicit ``"$user"`` puts it first —
+#: then the reflected tables come back unqualified and their foreign keys report
+#: ``referred_schema = None``, while the models say ``aicore``. Alembic compares
+#: foreign keys literally, so it would then report every constraint as both added
+#: and removed on every run, and ``alembic check`` would fail in CI for a schema
+#: that is in fact correct. Pinning a search_path that contains nothing makes the
+#: comparison deterministic for every operator regardless of the role's defaults.
+MIGRATION_SEARCH_PATH = ""
+
+#: Guards against a driver that does not understand the ``options`` connect
+#: argument: applying this to an unexpected backend would be worse than skipping it.
+_POSTGRESQL_DRIVERS = ("postgresql", "postgres")
+
+
+def _migration_connect_args(url: str) -> dict[str, object]:
+    """Extra connection arguments that make reflection deterministic."""
+    driver = make_url(url).get_backend_name()
+    if driver not in _POSTGRESQL_DRIVERS:
+        return {}
+    return {"options": f"-c search_path={MIGRATION_SEARCH_PATH}"}
+
+
 def _configure(connection: Connection | None, url: str, *, offline: bool) -> None:
     context.configure(
         connection=connection,
@@ -104,7 +133,9 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Apply migrations to the configured database."""
     url = _database_url()
-    connectable = create_engine(url, poolclass=pool.NullPool)
+    connectable = create_engine(
+        url, poolclass=pool.NullPool, connect_args=_migration_connect_args(url)
+    )
 
     # The version table lives in the AICore schema, so the namespace must exist
     # before Alembic boots. It is created in its own committed transaction on

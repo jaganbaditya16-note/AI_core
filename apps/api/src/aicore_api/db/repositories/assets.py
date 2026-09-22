@@ -375,13 +375,62 @@ class AssetRepository(OrganizationScopedRepository):
         last_seen_at: datetime | None = None,
         asset_metadata: Mapping[str, Any] | None = None,
     ) -> Asset:
-        """Insert one asset. Its identity columns are set here, never by the caller.
+        """Insert one asset and commit it.
 
-        ``organization_id`` comes from the repository (the tenant is not a request
-        field), ``status``/``discovery_state``/``risk_classification`` have
-        database defaults and are only overridden when the caller states them, and
+        The unit of work is this method: it stages the row, commits, and returns
+        the committed record. A caller that needs the insert to be *part* of a
+        larger transaction (Phase 4's agent registration, which writes a record and
+        its asset together) uses :meth:`insert` and owns the commit itself.
+        """
+        with self.writing():
+            asset = self.insert(
+                name=name,
+                asset_type=asset_type,
+                description=description,
+                status=status,
+                environment=environment,
+                discovery_state=discovery_state,
+                risk_classification=risk_classification,
+                owner_membership_id=owner_membership_id,
+                external_identifier=external_identifier,
+                discovery_source=discovery_source,
+                last_seen_at=last_seen_at,
+                asset_metadata=asset_metadata,
+            )
+            self.session.commit()
+            # After commit, not before: the primary key and the timestamps are
+            # written by the database, and a caller echoing the new asset back
+            # should echo the row that exists.
+            self.session.refresh(asset)
+        return asset
+
+    def insert(
+        self,
+        *,
+        name: str,
+        asset_type: str,
+        description: str | None = None,
+        status: str = AssetStatus.DRAFT.value,
+        environment: str = Environment.UNKNOWN.value,
+        discovery_state: str = DiscoveryState.MANAGED.value,
+        risk_classification: str = RiskClassification.UNASSESSED.value,
+        owner_membership_id: uuid.UUID | None = None,
+        external_identifier: str | None = None,
+        discovery_source: str = MANUAL_DISCOVERY_SOURCE,
+        last_seen_at: datetime | None = None,
+        asset_metadata: Mapping[str, Any] | None = None,
+    ) -> Asset:
+        """Stage an ``INSERT`` for one asset; the caller owns the transaction.
+
+        Its identity columns are set here, never by the caller. ``organization_id``
+        comes from the repository (the tenant is not a request field),
+        ``status``/``discovery_state``/``risk_classification`` have database
+        defaults and are only overridden when the caller states them, and
         ``discovery_source`` defaults to ``manual`` — an API caller cannot claim a
         record came from an integration.
+
+        Must be called with this repository's tenant bound (inside
+        :meth:`writing`): the flush is what the engine-level guard inspects.
         """
         asset = Asset(
             organization_id=self.organization_id,
@@ -398,33 +447,45 @@ class AssetRepository(OrganizationScopedRepository):
             last_seen_at=last_seen_at,
             asset_metadata=dict(asset_metadata) if asset_metadata is not None else None,
         )
-        with self.writing():
-            self.session.add(asset)
-            try:
-                self.session.flush()
-            except IntegrityError as exc:
-                self.session.rollback()
-                raise _translate_integrity_error(exc) from exc
-            self.session.commit()
-            # After commit, not before: the primary key and the timestamps are
-            # written by the database, and a caller echoing the new asset back
-            # should echo the row that exists.
-            self.session.refresh(asset)
+        self.session.add(asset)
+        self._flush()
         return asset
 
+    def apply(self, asset: Asset, change: AssetUpdate) -> list[str]:
+        """Apply ``change`` to ``asset`` without committing; returns changed names.
+
+        The non-committing half of :meth:`update`, for callers that are already
+        inside a unit of work — the registry, which changes an agent and its
+        inventory record together or not at all. Must be called with the tenant
+        bound.
+        """
+        changed = change.apply_to(asset)
+        if changed:
+            self._flush()
+        return changed
+
     def update(self, asset: Asset, change: AssetUpdate) -> list[str]:
-        """Apply ``change`` to ``asset``; returns the names of what changed."""
+        """Apply ``change`` to ``asset`` and commit; returns the names of what changed."""
         with self.writing():
-            changed = change.apply_to(asset)
+            changed = self.apply(asset, change)
             if changed:
-                try:
-                    self.session.flush()
-                except IntegrityError as exc:
-                    self.session.rollback()
-                    raise _translate_integrity_error(exc) from exc
                 self.session.commit()
                 self.session.refresh(asset)
         return changed
+
+    def _flush(self) -> None:
+        """Flush, translating a constraint violation into a domain error.
+
+        One place, so every write path answers the same way: a duplicate external
+        identifier is a conflict, a reference that does not resolve is an invalid
+        reference, and a defect is not disguised as either (see
+        :func:`_translate_integrity_error`).
+        """
+        try:
+            self.session.flush()
+        except IntegrityError as exc:
+            self.session.rollback()
+            raise _translate_integrity_error(exc) from exc
 
     def delete(self, asset: Asset) -> None:
         """Remove one asset from the inventory.

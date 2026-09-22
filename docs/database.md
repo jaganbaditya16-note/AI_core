@@ -1,13 +1,16 @@
-# Database and multi-tenancy (Phases 1–3)
+# Database and multi-tenancy (Phases 1–4)
 
 Phase 1 added the PostgreSQL foundation and the tenant boundary every later phase
 builds on. Phase 2 adds the identity and access tables that turn that boundary
 into something a user can actually be authorized inside: **users, roles,
-permissions, role-permission grants, memberships and API tokens**.
+permissions, role-permission grants, memberships and API tokens**. Phase 3 added
+the inventory (**assets**), and Phase 4 the agent registry (**agents**) that gives
+one kind of asset a stable identity.
 
-Agents, models, tools, data sources, policies, events and incidents still do not
-exist. What exists is the set of conventions and the isolation mechanism they will
-inherit — plus, now, the callers who will reach them.
+Models, tools, data sources, policies, events and incidents still do not exist as
+separate tables. What exists is the set of conventions and the isolation mechanism
+they will inherit — plus the callers who will reach them, and the records they
+will reach.
 
 ## The tenant model
 
@@ -215,6 +218,58 @@ the model inherits `TenantOwnedMixin` (which is *how* the guard recognizes it), 
 any statement that touches it without a bound tenant or without filtering on
 `organization_id` is refused with `TenantScopeError` before it reaches PostgreSQL.
 
+## The agent registry table (Phase 4)
+
+`agents` is the identity layer over an `agent` asset. It exists because identity
+and inventory answer different questions: the inventory says *what an organization
+has*, the registry says *which agent this is* — a value that must not change when a
+name or a version does.
+
+```sql
+aicore.agents
+├── id                 uuid  PK          gen_random_uuid()
+├── organization_id    uuid  NOT NULL    FK → organizations(id)              ON DELETE RESTRICT
+├── identity_id        uuid  NOT NULL    gen_random_uuid()   ← the stable identity
+├── asset_id           uuid  NOT NULL    UNIQUE              ← one identity per agent
+├── category           varchar(32)       CHECK (eight-value vocabulary)
+├── version            varchar(64)       CHECK (1 … 64 non-blank characters)
+├── build_revision     varchar(128)      NULL, CHECK
+├── framework          varchar(64)       NULL, CHECK
+├── identity_metadata  jsonb             NULL, CHECK (jsonb_typeof = 'object')
+├── created_at / updated_at  timestamptz NOT NULL DEFAULT now()
+├── UNIQUE (organization_id, identity_id)                        ← identity, per tenant
+└── FOREIGN KEY (organization_id, asset_id)
+        REFERENCES assets (organization_id, id)                ON DELETE CASCADE
+```
+
+| Constraint | Why |
+|---|---|
+| `uq_agents_asset_id` | One identity per agent: two registry rows for one asset would be two identities for one thing |
+| `uq_agents_organization_id_identity_id` | Identity is unique *per organization*, so an identity lookup can never be ambiguous |
+| `fk_agents_organization_id_assets` (composite, CASCADE) | The registry record's asset must be in the registry record's own organization, and removing the asset removes the identity — an orphaned identity is not a reachable state |
+| `fk_agents_organization_id_organizations` (RESTRICT) | The registry holds its own reference to the tenant, so the boundary does not depend on another table's constraint |
+| `ck_agents_category_valid`, `ck_agents_version_length`, `ck_agents_build_revision_length`, `ck_agents_framework_length` | The closed vocabularies and bounded labels, enforced in PostgreSQL and not only in Pydantic |
+| `ck_agents_identity_metadata_is_object` | JSON metadata is an object or nothing, as on `assets` |
+
+The composite foreign key needs a unique set of columns on `assets`
+(`uq_assets_organization_id_id`, added by the same revision immediately before the
+registry table), because PostgreSQL can only point a foreign key at a unique set.
+
+Indexes: `ix_agents_organization_id` (the tenant filter every query leads with) and
+`ix_agents_organization_id_category` (the one registry-level filter). `asset_id`
+and `(organization_id, identity_id)` are served by their unique constraints.
+
+Deliberately **not** duplicated here: the display name, description, lifecycle
+status, environment and owner. Those live on `assets`, constrained exactly as Phase
+3 constrains them — including the composite foreign key that makes a cross-tenant
+owner unrepresentable. Verified structurally by
+`test_the_registry_does_not_duplicate_inventory_state`, which asserts this table's
+column set exactly.
+
+`agents` inherits `TenantOwnedMixin`, so it is covered by the tenancy guard like
+every other tenant-owned table: a statement that does not filter on
+`organization_id` is refused before it reaches PostgreSQL.
+
 ## Migrations
 
 Alembic, as a **dev dependency** (`apps/api/pyproject.toml`). The API runtime
@@ -228,6 +283,7 @@ database/migrations/versions/
   0001_organizations.py         # Phase 1: schema + tenant root
   0002_identity_and_rbac.py     # Phase 2: users, roles, permissions, grants, memberships, tokens
   0003_assets.py                # Phase 3: the inventory table + the four asset permissions
+  0004_agents.py                # Phase 4: the agent registry + the four agent permissions
 ```
 
 ```bash

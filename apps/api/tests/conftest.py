@@ -36,6 +36,7 @@ from sqlalchemy import Engine, create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from agents_fixture import AgentFactory  # noqa: E402
 from aicore_api.config import Settings, get_settings  # noqa: E402
 from aicore_api.db import tenancy  # noqa: E402
 from aicore_api.db.base import APP_SCHEMA  # noqa: E402
@@ -220,6 +221,31 @@ def assets(
         # Before the identity purge, which happens after this fixture: a membership
         # that still owns assets cannot be deleted (the composite foreign key is
         # RESTRICT), so the inventory has to go first.
+        factory.purge()
+
+
+@pytest.fixture
+def agents(
+    authenticate, owner_identity: Identity, integration_engine: Engine
+) -> Iterator[AgentFactory]:
+    """An owner of a fresh tenant, authenticated, and a factory for their agents.
+
+    The registry mirror of the ``assets`` fixture: a tenant that belongs to nobody
+    else, a credential that can register in it, and agents created *through the API*
+    so a test using this fixture is already exercising the registration path it is
+    about to assert on.
+    """
+    factory = AgentFactory(
+        client=authenticate(owner_identity),
+        organization_id=owner_identity.organization_id,
+        engine=integration_engine,
+    )
+    try:
+        yield factory
+    finally:
+        # Before the identity purge, which happens after this fixture: an agent's
+        # asset may be owned by a membership that cannot be deleted while it is
+        # referenced (the composite foreign key is RESTRICT).
         factory.purge()
 
 

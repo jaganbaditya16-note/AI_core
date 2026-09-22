@@ -90,6 +90,67 @@ EXPECTED_ASSET_REQUEST_FIELDS = {
     },
 }
 
+#: Phase 4's published shapes. An agent read is the registry's fields plus the
+#: record's, and the request models publish what a client may send — never
+#: `identity_id`, `asset_id` or `organization_id`, which the server owns. The owner
+#: shape is the inventory's ``AssetOwnerRead``: one owner contract, not two.
+EXPECTED_AGENT_SCHEMAS = {
+    "AgentRead": {
+        "id",
+        "organization_id",
+        "identity_id",
+        "asset_id",
+        "display_name",
+        "description",
+        "category",
+        "version",
+        "framework",
+        "build_revision",
+        "status",
+        "environment",
+        "identity_metadata",
+        "owner",
+        "created_at",
+        "updated_at",
+    },
+    "AgentListResponse": {"organization_id", "items", "count", "limit", "offset", "total"},
+}
+
+EXPECTED_AGENT_REQUEST_FIELDS = {
+    "AgentCreate": {
+        "display_name",
+        "description",
+        "category",
+        "version",
+        "status",
+        "environment",
+        "framework",
+        "build_revision",
+        "identity_metadata",
+        "owner_user_id",
+        "external_identifier",
+    },
+    "AgentUpdateRequest": {
+        "display_name",
+        "description",
+        "category",
+        "version",
+        "status",
+        "environment",
+        "framework",
+        "build_revision",
+        "identity_metadata",
+        "owner_user_id",
+    },
+}
+
+AGENT_ROUTES = (
+    "/organizations/{organization_id}/agents",
+    "/organizations/{organization_id}/agents/identity/{identity_id}",
+    "/organizations/{organization_id}/agents/{agent_id}",
+)
+
+
 ASSET_ROUTES = (
     "/organizations/{organization_id}/assets",
     "/organizations/{organization_id}/assets/owners",
@@ -153,6 +214,48 @@ def test_asset_schema_fields(client: TestClient) -> None:
         assert not published & {"id", "organization_id", "created_at", "discovery_source"}, name
 
 
+def test_agent_schema_fields(client: TestClient) -> None:
+    """The registry contract is published, and identity is not an input."""
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    for name, fields in EXPECTED_AGENT_SCHEMAS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    for name, fields in EXPECTED_AGENT_REQUEST_FIELDS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    for name in EXPECTED_AGENT_REQUEST_FIELDS:
+        published = set(schemas[name]["properties"])
+        assert not published & {
+            "id",
+            "identity_id",
+            "asset_id",
+            "organization_id",
+            "created_at",
+            "updated_at",
+        }, name
+
+
+def test_the_agent_vocabularies_are_published(client: TestClient) -> None:
+    """A client can read the category vocabulary from the document, not from prose."""
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    assert set(schemas["AgentCategory"]["enum"]) == {
+        "assistant",
+        "workflow",
+        "autonomous",
+        "coding",
+        "customer_support",
+        "data",
+        "security",
+        "other",
+    }
+    # An agent's lifecycle states are the inventory's: one vocabulary, not two.
+    assert set(schemas["AssetStatus"]["enum"]) == {"draft", "active", "suspended", "retired"}
+
+
 def test_the_asset_vocabularies_are_published(client: TestClient) -> None:
     """A client can read the closed vocabularies from the document, not from prose."""
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
@@ -182,6 +285,7 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         ("get", "/organizations/{organization_id}/roles"),
         ("get", "/organizations/{organization_id}/permissions"),
         *((verb, route) for route in ASSET_ROUTES for verb in ("get",)),
+        *((verb, route) for route in AGENT_ROUTES for verb in ("get",)),
     ):
         assert "401" in paths[route][method]["responses"], route
 
@@ -190,6 +294,10 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         ("get", "/organizations/{organization_id}/assets/{asset_id}"),
         ("patch", "/organizations/{organization_id}/assets/{asset_id}"),
         ("delete", "/organizations/{organization_id}/assets/{asset_id}"),
+        ("post", "/organizations/{organization_id}/agents"),
+        ("get", "/organizations/{organization_id}/agents/{agent_id}"),
+        ("patch", "/organizations/{organization_id}/agents/{agent_id}"),
+        ("delete", "/organizations/{organization_id}/agents/{agent_id}"),
     ):
         assert "401" in paths[route][method]["responses"], route
 
@@ -202,6 +310,7 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         "/organizations/{organization_id}/roles",
         "/organizations/{organization_id}/permissions",
         *ASSET_ROUTES,
+        *AGENT_ROUTES,
     ):
         responses = paths[route]["get"]["responses"]
         assert "403" in responses, route
@@ -226,6 +335,7 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         | report_fields
         | {field for fields in EXPECTED_IDENTITY_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_ASSET_SCHEMAS.values() for field in fields}
+        | {field for fields in EXPECTED_AGENT_SCHEMAS.values() for field in fields}
     )
     for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
@@ -241,16 +351,42 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "AssetListResponse",
         "AssetOwner",
         "AssetOwnerListResponse",
+        "Agent",
+        "AgentListResponse",
+        "AgentIdentityMetadata",
     ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
 
     # …and every closed asset vocabulary is enumerated there rather than left as
     # a bare `string`, so a client that switches on the type is checked by tsc.
-    for name in ("AssetType", "AssetStatus", "DiscoveryState", "RiskClassification"):
+    for name in (
+        "AssetType",
+        "AssetStatus",
+        "DiscoveryState",
+        "RiskClassification",
+        "AgentCategory",
+    ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
-    for value in ("mcp_server", "data_source", "shadow", "retired", "unassessed"):
+    for value in (
+        "mcp_server",
+        "data_source",
+        "shadow",
+        "retired",
+        "unassessed",
+        "customer_support",
+        "autonomous",
+    ):
         assert f'"{value}"' in source, f"packages/types is missing the literal {value!r}"
 
     # Guard against a domain model creeping into phases that are not implemented.
-    for not_yet in ("Agent", "Policy", "Incident", "ActionFirewall", "ModelRegistry"):
+    # Agent is no longer on this list — Phase 4 implemented it. Everything the later
+    # phases own still has to stay out of the shared contract until it exists.
+    for not_yet in (
+        "Policy",
+        "PolicyDecision",
+        "Incident",
+        "ActionFirewall",
+        "RuntimeSession",
+        "Approval",
+    ):
         assert f"interface {not_yet}" not in source, f"packages/types declares {not_yet}"

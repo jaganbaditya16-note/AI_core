@@ -595,11 +595,13 @@ def test_a_refusal_names_the_permission_that_was_missing(
     assert "asset.create" in body["message"]
 
 
-def test_no_role_holds_permissions_this_phase_did_not_introduce() -> None:
-    """Phase 3 adds exactly four permissions, and no role gains anything else.
+def test_no_role_holds_permissions_this_build_did_not_introduce() -> None:
+    """Each phase adds exactly the permissions it can enforce, and nothing wider.
 
     Stated as an assertion because the temptation to widen a role while adding a
-    feature is exactly how a least-privilege table erodes.
+    feature is exactly how a least-privilege table erodes. Phase 3 added the four
+    inventory permissions; Phase 4 added the four registry permissions, and the
+    agent namespace holds *only* those — registering an agent is not executing one.
     """
     assert {permission for permission in Permission if permission.value.startswith("asset.")} == {
         Permission.ASSET_READ,
@@ -607,13 +609,34 @@ def test_no_role_holds_permissions_this_phase_did_not_introduce() -> None:
         Permission.ASSET_UPDATE,
         Permission.ASSET_DELETE,
     }
+    assert {permission for permission in Permission if permission.value.startswith("agent.")} == {
+        Permission.AGENT_READ,
+        Permission.AGENT_CREATE,
+        Permission.AGENT_UPDATE,
+        Permission.AGENT_DELETE,
+    }
     assert set(ROLE_PERMISSIONS) == set(RoleCode)
 
-    # The permission vocabulary contains nothing about executing, suspending or
-    # containing an asset: those are later phases, and a permission for them now
-    # would be a claim the application cannot honour.
-    forbidden_prefixes = ("agent.", "policy.", "firewall.", "incident.", "action.")
-    assert not [p for p in Permission if p.value.startswith(forbidden_prefixes)]
+    # The permission vocabulary contains nothing about executing, suspending,
+    # containing or approving an agent, or about policies, firewalls, incidents and
+    # runtime actions: those are later phases, and a permission for them now would
+    # be a claim the application cannot honour.
+    forbidden_prefixes = ("policy.", "firewall.", "incident.", "action.")
+    forbidden_agent_actions = (
+        "agent.execute",
+        "agent.suspend",
+        "agent.approve",
+        "agent.control",
+        "agent.policy.",
+        "agent.firewall.",
+        "agent.session",
+        "agent.token",
+    )
+    assert not [
+        permission
+        for permission in Permission
+        if permission.value.startswith(forbidden_prefixes + forbidden_agent_actions)
+    ]
 
 
 # ── Credentials ──────────────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from aicore_api.api.ownership import resolve_owner_membership
 from aicore_api.auth.authorization import OrganizationContext
 from aicore_api.auth.dependencies import SessionDep, require_permission
 from aicore_api.core.assets import (
@@ -56,10 +57,9 @@ from aicore_api.core.events import (
 )
 from aicore_api.core.permissions import Permission
 from aicore_api.db.models.asset import Asset
-from aicore_api.db.models.membership import Membership, MembershipStatus
+from aicore_api.db.models.membership import Membership
 from aicore_api.db.models.user import User
 from aicore_api.db.repositories.assets import AssetRepository, AssetUpdate
-from aicore_api.db.repositories.memberships import MembershipRepository
 from aicore_api.schemas.assets import (
     AssetCreate,
     AssetListResponse,
@@ -176,28 +176,13 @@ def _external_identifier(value: str | None) -> str | None:
 def _resolve_owner(
     session: Session, context: OrganizationContext, user_id: uuid.UUID | None
 ) -> uuid.UUID | None:
-    """Resolve an owner user id to a membership **of this organization**.
+    """Resolve ``user_id`` to an owner membership of the context's organization.
 
-    The database would refuse a foreign or invented owner anyway (the composite
-    foreign key), but a 422 that names the problem is a better answer than an
-    integrity error — and resolving here is what makes "the owner is a member of
-    this tenant" true at the API boundary as well as in the schema. A user who is
-    not a member, or whose membership is suspended, cannot own an asset.
+    The rule itself lives in :mod:`aicore_api.api.ownership`, shared with the agent
+    registry: it is a tenant-integrity rule, and a second copy of it would be a
+    second place for it to drift.
     """
-    if user_id is None:
-        return None
-    membership = MembershipRepository(session, context.organization_id).find_for_user(user_id)
-    if membership is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="owner must be a member of this organization",
-        )
-    if membership.status != MembershipStatus.ACTIVE.value:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="owner must be an active member of this organization",
-        )
-    return membership.id
+    return resolve_owner_membership(session, context.organization_id, user_id)
 
 
 def _write(repository: AssetRepository, operation: Any) -> Any:

@@ -189,10 +189,13 @@ try:
     print(f"[test-db]   upgrade:   {applied}")
     print(f"[test-db]   downgrade: {reversed_tables}")
     print(f"[test-db]   upgrade:   {reapplied}")
-    if "organizations" not in applied or "organizations" in reversed_tables:
-        sys.exit("[test-db] FAILED: the migration does not reverse cleanly")
-    if "organizations" not in reapplied:
-        sys.exit("[test-db] FAILED: the re-applied migration did not recreate the schema")
+    for table in ("organizations", "assets", "agents"):
+        if table not in applied:
+            sys.exit(f"[test-db] FAILED: the migration did not create {table}")
+        if table in reversed_tables:
+            sys.exit(f"[test-db] FAILED: the downgrade left {table} behind")
+        if table not in reapplied:
+            sys.exit(f"[test-db] FAILED: the re-applied migration did not recreate {table}")
 
     # ── The tests that need a real database ──────────────────────────────────
     print("[test-db] running the test suite against the live database")

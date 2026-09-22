@@ -89,20 +89,23 @@ seniority:
 
 | Role | Purpose | Permissions |
 |---|---|---|
-| `owner` | Full administration of the organization it owns | all twelve |
-| `admin` | General organization administration | `organization.read`, `organization.update`, `user.read`, `user.manage`, `role.read`, `asset.read`, `asset.create`, `asset.update`, `asset.delete` |
-| `security_admin` | Security, audit, incidents, containment, security configuration | `organization.read`, `user.read`, `audit.read`, `security.read`, `asset.read`, `asset.update` |
-| `ai_admin` | Administration of AI assets and the AI platform | `organization.read`, `user.read`, `asset.read`, `asset.create`, `asset.update` |
-| `analyst` | Read and analyse AI and security information | `organization.read`, `security.read`, `asset.read` |
-| `viewer` | Read-only access to permitted resources | `organization.read`, `asset.read` |
+| `owner` | Full administration of the organization it owns | all sixteen |
+| `admin` | General organization administration | `organization.read`, `organization.update`, `user.read`, `user.manage`, `role.read`, `asset.read`, `asset.create`, `asset.update`, `asset.delete`, `agent.read`, `agent.create`, `agent.update`, `agent.delete` |
+| `security_admin` | Security, audit, incidents, containment, security configuration | `organization.read`, `user.read`, `audit.read`, `security.read`, `asset.read`, `asset.update`, `agent.read`, `agent.update` |
+| `ai_admin` | Administration of AI assets, agents and the AI platform | `organization.read`, `user.read`, `asset.read`, `asset.create`, `asset.update`, `agent.read`, `agent.create`, `agent.update` |
+| `analyst` | Read and analyse AI and security information | `organization.read`, `security.read`, `asset.read`, `agent.read` |
+| `viewer` | Read-only access to permitted resources | `organization.read`, `asset.read`, `agent.read` |
 
 The catalog lives in one place: `aicore_api/core/permissions.py`. It is seeded
 into the database by migration `0002_identity_and_rbac`, and a test compares the
 two copies against the live rows, so a role cannot silently lose a capability in a
-deployment. Phase 3 added the four `asset.*` permissions this table now shows;
-a permission still does not exist for a resource that does not exist, which is why
-`ai_admin` stewards the inventory without being able to delete from it, and why
-`security_admin` may record what it found without being able to create records.
+deployment. Phase 3 added the four `asset.*` permissions and Phase 4 the four
+`agent.*` permissions this table now shows; a permission still does not exist for a
+resource that does not exist, which is why `ai_admin` stewards the inventory and
+its agents without being able to delete either, and why `security_admin` may record
+what it found without being able to create records. There is deliberately no
+`agent.execute`, `agent.suspend` or `agent.control`: registering an agent is not the
+same capability as running one, and this build cannot run one.
 
 ## The permission model
 
@@ -123,6 +126,10 @@ application code may ask for:
 | `asset.create` | Register an asset in the inventory |
 | `asset.update` | Change an inventory record |
 | `asset.delete` | Remove an inventory record |
+| `agent.read` | See the organization's registered agents, and look one up by identity |
+| `agent.create` | Register an agent and give it a stable identity |
+| `agent.update` | Change a registered agent's record, version or lifecycle state |
+| `agent.delete` | Remove an agent identity and its inventory record |
 
 Code asks `require_permission(Permission.USER_READ)`. It never asks *"is this
 user an ADMIN?"* — a role check in a handler is a second, unauditable definition
@@ -216,9 +223,11 @@ Stated here so the boundary is as visible as the implementation:
   provisioning route (404 elsewhere), because Phase 2 has no
   platform-administrator concept that could authorize tenant creation;
 - **no permission for anything that does not exist** — no `agent.execute`,
-  `agent.suspend`, `policy.*`, `firewall.*` or `incident.*` permission. The four
-  `asset.*` permissions exist because Phase 3 built the resource they guard: an
-  inventory whose only operation is "read everything" would not be one;
+  `agent.suspend`, `agent.control`, `policy.*`, `firewall.*` or `incident.*`
+  permission. The four `asset.*` permissions exist because Phase 3 built the
+  resource they guard and the four `agent.*` permissions because Phase 4 built the
+  registry they guard: a capability nobody can exercise is a claim, not a control,
+  and registering an agent is not the same capability as running one;
 - **no PostgreSQL Row Level Security** — the design is documented and the schema
   is prepared for it, but it is not enabled (see [database.md](database.md));
 - **no audit records** — `audit.read` is a permission whose subject arrives in a

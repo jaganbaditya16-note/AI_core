@@ -46,9 +46,9 @@ ORG = "/organizations/{organization_id}"
 #: permission it must enforce. A route added without an entry here fails
 #: ``test_the_authorized_surface_is_what_the_routes_declare``.
 #: Every tenant-scoped route and the permission it declares. Phase 3 added the six
-#: inventory routes; the list stays literal on purpose, because a literal
-#: expectation is what notices when a route acquires a permission it should not
-#: have, or loses the one it needs.
+#: inventory routes and Phase 4 the six registry routes; the list stays literal on
+#: purpose, because a literal expectation is what notices when a route acquires a
+#: permission it should not have, or loses the one it needs.
 EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     ("GET", "/organizations/{organization_id}"): {Permission.ORGANIZATION_READ},
     ("GET", "/organizations/{organization_id}/members"): {Permission.USER_READ},
@@ -60,6 +60,14 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     ("GET", "/organizations/{organization_id}/assets/{asset_id}"): {Permission.ASSET_READ},
     ("PATCH", "/organizations/{organization_id}/assets/{asset_id}"): {Permission.ASSET_UPDATE},
     ("DELETE", "/organizations/{organization_id}/assets/{asset_id}"): {Permission.ASSET_DELETE},
+    ("GET", "/organizations/{organization_id}/agents"): {Permission.AGENT_READ},
+    ("POST", "/organizations/{organization_id}/agents"): {Permission.AGENT_CREATE},
+    ("GET", "/organizations/{organization_id}/agents/identity/{identity_id}"): {
+        Permission.AGENT_READ
+    },
+    ("GET", "/organizations/{organization_id}/agents/{agent_id}"): {Permission.AGENT_READ},
+    ("PATCH", "/organizations/{organization_id}/agents/{agent_id}"): {Permission.AGENT_UPDATE},
+    ("DELETE", "/organizations/{organization_id}/agents/{agent_id}"): {Permission.AGENT_DELETE},
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
@@ -67,7 +75,11 @@ TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
 #: Routes that address one entity. Asked with an id that does not exist they answer
 #: 404 — "authorized, but there is no such asset" — which is what distinguishes a
 #: permitted request from a denied one.
-ITEM_ROUTES = [route for route in TENANT_ROUTES if "{asset_id}" in route[1]]
+ITEM_ROUTES = [
+    route
+    for route in TENANT_ROUTES
+    if any(f"{{{name}}}" in route[1] for name in ("asset_id", "agent_id", "identity_id"))
+]
 
 #: Routes a fully permitted member can read outright: the collections, not the
 #: single-entity routes and not the create route, which needs a body.
@@ -78,10 +90,12 @@ READ_ROUTES = [route for route in TENANT_ROUTES if route not in ITEM_ROUTES and 
 PROTECTED_ROUTES = [*TENANT_ROUTES, ("GET", "/me")]
 
 
-def _url(path: str, organization_id: uuid.UUID, asset_id: uuid.UUID | None = None) -> str:
-    """Render a route template, filling in the asset id when the route needs one."""
+def _url(path: str, organization_id: uuid.UUID, item_id: uuid.UUID | None = None) -> str:
+    """Render a route template, filling in an item id when the route names one."""
     rendered = path.replace("{organization_id}", str(organization_id))
-    return rendered.replace("{asset_id}", str(asset_id if asset_id is not None else uuid.uuid4()))
+    for placeholder in ("asset_id", "agent_id", "identity_id"):
+        rendered = rendered.replace(f"{{{placeholder}}}", str(item_id or uuid.uuid4()))
+    return rendered
 
 
 def _sweep(
@@ -89,20 +103,26 @@ def _sweep(
     method: str,
     path: str,
     organization_id: uuid.UUID,
-    asset_id: uuid.UUID | None = None,
+    item_id: uuid.UUID | None = None,
 ) -> Any:
     """Send a *well-formed* request, so that authorization is what is under test.
 
     A validation failure and a refusal can look alike in a sweep like this, and an
     assertion cannot tell which one it saw — so the bodies are valid and the status
-    is the only variable.
+    is the only variable. The body follows the collection being addressed: an
+    inventory record and a registered agent are different shapes.
     """
+    agent_route = "/agents" in path
     body: dict[str, str] | None = None
     if method == "POST":
-        body = {"name": "Authorization Sweep", "asset_type": "model"}
+        body = (
+            {"display_name": "Authorization Sweep", "category": "other", "version": "1.0"}
+            if agent_route
+            else {"name": "Authorization Sweep", "asset_type": "model"}
+        )
     elif method == "PATCH":
-        body = {"risk_classification": "low"}
-    return client.request(method, _url(path, organization_id, asset_id), json=body)
+        body = {"version": "1.0.1"} if agent_route else {"risk_classification": "low"}
+    return client.request(method, _url(path, organization_id, item_id), json=body)
 
 
 # ── The catalog ───────────────────────────────────────────────────────────────
@@ -188,10 +208,14 @@ def test_the_owner_reaches_every_route(
         response = _sweep(client, method, path, identity.organization_id)
         assert response.status_code == 200, f"{method} {path}: {response.text}"
 
-    # Registering an asset is the one write the owner can make outright.
-    created = _sweep(client, "POST", f"{ORG}/assets", identity.organization_id)
-    assert created.status_code == 201, created.text
-    created_id = uuid.UUID(created.json()["id"])
+    # Registering is the one write the owner can make outright, in both collections.
+    asset = _sweep(client, "POST", f"{ORG}/assets", identity.organization_id)
+    assert asset.status_code == 201, asset.text
+    agent = _sweep(client, "POST", f"{ORG}/agents", identity.organization_id)
+    assert agent.status_code == 201, agent.text
+    asset_id = uuid.UUID(asset.json()["id"])
+    agent_id = uuid.UUID(agent.json()["id"])
+    identity_id = uuid.UUID(agent.json()["identity_id"])
 
     # The item routes are reached with an id that does not exist — and with one
     # that does. Both matter: the first proves the owner is not denied (404 rather
@@ -200,10 +224,33 @@ def test_the_owner_reaches_every_route(
         absent = _sweep(client, method, path, identity.organization_id)
         assert absent.status_code == 404, f"{method} {path}: {absent.text}"
 
-    item = f"{ORG}/assets/{{asset_id}}"
-    assert _sweep(client, "GET", item, identity.organization_id, created_id).status_code == 200
-    assert _sweep(client, "PATCH", item, identity.organization_id, created_id).status_code == 200
-    assert _sweep(client, "DELETE", item, identity.organization_id, created_id).status_code == 204
+    asset_item = f"{ORG}/assets/{{asset_id}}"
+    assert _sweep(client, "GET", asset_item, identity.organization_id, asset_id).status_code == 200
+    assert (
+        _sweep(client, "PATCH", asset_item, identity.organization_id, asset_id).status_code == 200
+    )
+    assert (
+        _sweep(client, "DELETE", asset_item, identity.organization_id, asset_id).status_code == 204
+    )
+
+    agent_item = f"{ORG}/agents/{{agent_id}}"
+    assert _sweep(client, "GET", agent_item, identity.organization_id, agent_id).status_code == 200
+    assert (
+        _sweep(client, "PATCH", agent_item, identity.organization_id, agent_id).status_code == 200
+    )
+    assert (
+        _sweep(
+            client,
+            "GET",
+            f"{ORG}/agents/identity/{{identity_id}}",
+            identity.organization_id,
+            identity_id,
+        ).status_code
+        == 200
+    )
+    assert (
+        _sweep(client, "DELETE", agent_item, identity.organization_id, agent_id).status_code == 204
+    )
 
 
 def test_a_viewer_may_read_the_organization_and_nothing_else(
@@ -231,6 +278,7 @@ def test_an_analyst_reads_analysis_inputs_but_does_not_administer(
 
     body = client.get("/me").json()
     assert body["memberships"][0]["permissions"] == [
+        Permission.AGENT_READ.value,
         Permission.ASSET_READ.value,
         Permission.ORGANIZATION_READ.value,
         Permission.SECURITY_READ.value,
@@ -251,6 +299,8 @@ def test_a_security_admin_gets_security_permissions_and_nothing_wider(
 
     granted = set(client.get("/me").json()["memberships"][0]["permissions"])
     assert granted == {
+        Permission.AGENT_READ.value,
+        Permission.AGENT_UPDATE.value,
         Permission.ASSET_READ.value,
         Permission.ASSET_UPDATE.value,
         Permission.ORGANIZATION_READ.value,
@@ -276,6 +326,9 @@ def test_an_ai_admin_administers_ai_assets_and_not_security(
 
     granted = set(client.get("/me").json()["memberships"][0]["permissions"])
     assert granted == {
+        Permission.AGENT_CREATE.value,
+        Permission.AGENT_READ.value,
+        Permission.AGENT_UPDATE.value,
         Permission.ASSET_CREATE.value,
         Permission.ASSET_READ.value,
         Permission.ASSET_UPDATE.value,
@@ -284,8 +337,10 @@ def test_an_ai_admin_administers_ai_assets_and_not_security(
     }
     assert Permission.SECURITY_READ.value not in granted
     assert Permission.AUDIT_READ.value not in granted
-    # Stewardship of the inventory is not authority to erase records of it.
+    # Stewardship of the inventory and its agents is not authority to erase the
+    # record of either.
     assert Permission.ASSET_DELETE.value not in granted
+    assert Permission.AGENT_DELETE.value not in granted
 
     assert client.get(f"{path}/members").status_code == 200
     assert client.get(f"{path}/roles").status_code == 403

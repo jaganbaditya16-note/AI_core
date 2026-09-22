@@ -44,6 +44,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     String,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -177,6 +178,13 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, TenantOwnedMixin, Base):
             ],
             ondelete="RESTRICT",
         ),
+        # Redundant with the primary key, and load-bearing anyway: an agent
+        # registry record addresses its asset as ``(organization_id, asset_id)``
+        # through a composite foreign key, and PostgreSQL can only reference a
+        # unique set of columns. This is that set — so "the agent's asset belongs
+        # to the agent's organization" is enforced by the database rather than
+        # remembered by the application.
+        UniqueConstraint("organization_id", "id"),
         # Deduplication: one row per (organization, type, external identifier).
         # Partial, because an asset registered by hand has no external identifier
         # and two such assets are not duplicates of each other.

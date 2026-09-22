@@ -41,6 +41,14 @@ ASSET_UPDATED = "asset.updated"
 ASSET_DELETED = "asset.deleted"
 ASSET_DISCOVERED = "asset.discovered"
 
+#: Phase 4's registry events. A registration is not an "asset created" event with
+#: extra fields: it is the moment an agent acquired an identity, which a later
+#: audit phase will want to read on its own — and the inventory record it brings
+#: with it is reported as an asset event too, because that is what happened.
+AGENT_REGISTERED = "agent.registered"
+AGENT_UPDATED = "agent.updated"
+AGENT_DELETED = "agent.deleted"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:

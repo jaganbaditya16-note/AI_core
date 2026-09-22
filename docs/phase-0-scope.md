@@ -28,9 +28,10 @@ what is and is not in the repository at this point.
 
 This list describes the Phase 0 baseline. Phase 1 has since added tenants
 ([database.md](database.md)), Phase 2 identity and authorization
-([authentication.md](authentication.md)), and Phase 3 the AI asset inventory
-([inventory.md](inventory.md)) — the entries below that those phases cover say
-what Phase 0 did not build, and the rest are still absent.
+([authentication.md](authentication.md)), Phase 3 the AI asset inventory
+([inventory.md](inventory.md)) and Phase 4 the agent registry
+([agents.md](agents.md)) — the entries below that those phases cover say what
+Phase 0 did not build, and the rest are still absent.
 
 Nothing below existed in Phase 0, not even as a stub. Anything that looked like a
 fake version of these would be worse than nothing, because it would misrepresent
@@ -43,7 +44,9 @@ absences here are the *user-facing* identity features, not the data model.)
 
 **Inventory & discovery:** agent registry, model registry, tool registry, AI
 inventory, dependency graph, shadow-AI detection, agent identity, AI
-supply-chain security.
+supply-chain security. (Phase 3 records the inventory and Phase 4 registers agents
+with an identity; model and tool *registries*, the dependency graph, automatic
+discovery and supply-chain analysis are still absent.)
 
 **Control:** permissions, policy engine, policy-as-code, action firewall,
 approval workflows, kill switch, MCP firewall, model routing.

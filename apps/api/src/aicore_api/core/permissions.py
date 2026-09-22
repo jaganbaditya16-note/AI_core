@@ -14,12 +14,14 @@ Two rules shape this module:
 
 Scope discipline: the permissions below are exactly those the application can
 enforce today — the Phase 2 foundation (organization, membership, role and
-read-only oversight) and the Phase 3 AI asset inventory. Permissions for the
-policy engine, the action firewall, agent execution, approvals and incidents are
-**not** declared yet: they belong to the phases that implement the resources
-behind them. A permission with nothing to guard would be a claim, not a control,
-and this table would become a document of intentions rather than a description of
-the system.
+read-only oversight), the Phase 3 AI asset inventory, and the Phase 4 agent
+registry. Permissions for the policy engine, the action firewall, agent execution,
+approvals and incidents are **not** declared yet: they belong to the phases that
+implement the resources behind them. A permission with nothing to guard would be a
+claim, not a control, and this table would become a document of intentions rather
+than a description of the system. There is deliberately no ``agent.execute``,
+``agent.suspend``, ``agent.approve``, ``agent.control`` or ``agent.policy.*``:
+registering an agent is not the same capability as running one.
 """
 
 from __future__ import annotations
@@ -59,6 +61,10 @@ class Permission(StrEnum):
     ASSET_CREATE = "asset.create"
     ASSET_UPDATE = "asset.update"
     ASSET_DELETE = "asset.delete"
+    AGENT_READ = "agent.read"
+    AGENT_CREATE = "agent.create"
+    AGENT_UPDATE = "agent.update"
+    AGENT_DELETE = "agent.delete"
 
 
 class RoleCode(StrEnum):
@@ -90,9 +96,13 @@ class RoleCode(StrEnum):
 #:                    assets; it may not create or delete records). Enforcing
 #:                    containment at runtime is a later phase with its own
 #:                    permission — the inventory state is a record, not an action.
-#: - AI_ADMIN       — AI asset/platform administration: creates and maintains
-#:                    inventory records, but does not delete them (removing a
-#:                    record is an administrative decision, not a stewardship one).
+#:                    The registry follows the same rule: it reads agents and may
+#:                    record a lifecycle change, but it does not create or delete
+#:                    identities.
+#: - AI_ADMIN       — AI asset and agent administration: registers agents and
+#:                    maintains their records and versions, but does not delete
+#:                    them (removing an identity is an administrative decision,
+#:                    not a stewardship one).
 #: - ANALYST        — reads and analyses security information; no management
 #:                    permission at all.
 #: - VIEWER         — read-only access to what it is granted, and nothing else.
@@ -112,6 +122,10 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.ASSET_CREATE,
                 Permission.ASSET_UPDATE,
                 Permission.ASSET_DELETE,
+                Permission.AGENT_READ,
+                Permission.AGENT_CREATE,
+                Permission.AGENT_UPDATE,
+                Permission.AGENT_DELETE,
             }
         ),
         RoleCode.SECURITY_ADMIN: frozenset(
@@ -122,6 +136,8 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.SECURITY_READ,
                 Permission.ASSET_READ,
                 Permission.ASSET_UPDATE,
+                Permission.AGENT_READ,
+                Permission.AGENT_UPDATE,
             }
         ),
         RoleCode.AI_ADMIN: frozenset(
@@ -131,6 +147,9 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.ASSET_READ,
                 Permission.ASSET_CREATE,
                 Permission.ASSET_UPDATE,
+                Permission.AGENT_READ,
+                Permission.AGENT_CREATE,
+                Permission.AGENT_UPDATE,
             }
         ),
         RoleCode.ANALYST: frozenset(
@@ -138,12 +157,14 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.ORGANIZATION_READ,
                 Permission.SECURITY_READ,
                 Permission.ASSET_READ,
+                Permission.AGENT_READ,
             }
         ),
         RoleCode.VIEWER: frozenset(
             {
                 Permission.ORGANIZATION_READ,
                 Permission.ASSET_READ,
+                Permission.AGENT_READ,
             }
         ),
     }

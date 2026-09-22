@@ -26,17 +26,21 @@ logger = logging.getLogger(__name__)
 DESCRIPTION = """
 AICore is an enterprise AI control plane.
 
-**Phase 2 scope:** health endpoints, the PostgreSQL multi-tenancy foundation, and
-the authentication and RBAC foundation on top of it — bearer API tokens identify
-a user, memberships bind them to an organization with a role, and routes
-authorize against the explicit permissions that role grants.
+**Implemented today:** health endpoints, the PostgreSQL multi-tenancy foundation,
+the authentication and RBAC foundation on top of it, the AI asset inventory, and
+the agent registry. Bearer API tokens identify a user, memberships bind them to an
+organization with a role, routes authorize against the explicit permissions that
+role grants, the inventory records what AI-related things an organization knows
+about, and the registry gives an ``agent`` asset a stable identity that survives
+renames and version changes.
 
 Every tenant-scoped route resolves the caller's membership in the organization in
-its path before it runs. AI inventory, the policy engine, the action firewall,
+its path before it runs. The policy engine, the action firewall, agent execution,
 audit records, incidents and intelligence features are still not implemented, and
-no endpoint pretends otherwise. Tenant creation remains a development/test
-provisioning path: this phase has no platform-administrator concept that could
-authorize it.
+no endpoint pretends otherwise: nothing here starts, stops, blocks or contains an
+agent, and ``status: suspended`` is a record rather than a runtime control. Tenant
+creation remains a development/test provisioning path, because this build has no
+platform-administrator concept that could authorize it.
 """
 
 

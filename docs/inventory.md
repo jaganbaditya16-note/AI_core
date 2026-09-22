@@ -35,7 +35,7 @@ Every asset is one row in `aicore.assets`, whatever its type:
 
 | Type | What it covers |
 | --- | --- |
-| `agent` | An autonomous agent (framework, version) |
+| `agent` | An autonomous agent (framework, version) — Phase 4 adds the registry record that identifies it |
 | `application` | An application that uses AI (repository, identifier) |
 | `model` | A model (provider, model identifier, version) |
 | `tool` | A callable tool (tool identifier, endpoint) |
@@ -373,7 +373,10 @@ one:
 - **Risk classification is storage.** Five values, no scoring, no engine.
 - **No history.** An update overwrites the previous value; there is no revision
   table and no audit record (that is Phase 8).
-- **No dependency graph.** Assets do not reference each other yet.
+- **No dependency graph.** Assets do not reference each other yet. The one
+  extension that does exist is the agent registry: an `agent` asset can carry a
+  Phase 4 registry record with a stable identity, listed in
+  [agents.md](agents.md). No other type has one.
 - **No bulk operations.** One asset per request.
 - **No count caching or full-text search.** `?total=true` is a `COUNT(*)`;
   `name` is filtered by exact match only.

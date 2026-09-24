@@ -425,12 +425,17 @@ removing a tenant stays an explicit procedure.
 - **Nothing arbitrary is interpreted**: no `eval()`, no policy-authored SQL, no
   expression tree, no model call, no network call during evaluation.
 - **Nothing is executed.** No action, no interception, no approval, no suspension, no
-  incident, no notification. The engine evaluates; the action firewall — a later phase —
-  enforces.
+  incident, no notification. The engine evaluates; the action firewall (**Phase 7**)
+  enforces — and it enforces exactly one thing: a registered action from a closed
+  catalogue only runs when the policy layer's answer, combined with the authorization
+  decision, is an `ALLOW`. See [actions.md](actions.md).
 
 ## Boundaries (what this phase is not)
 
-- No runtime enforcement, interception, firewall or containment; no kill switch.
+- No enforcement inside the engine, and none here: `require_approval` is a value, an
+  `allow` is "no policy objected", and the only thing that acts on an answer is
+  Phase 7's action firewall — which runs registered actions, not agents.
+- No interception, no containment and no kill switch.
 - No approval workflow, approver, queue or UI: `require_approval` is a value.
 - No suspension as a policy action, and no policy-triggered side effect of any kind.
 - No monitoring, anomaly or threat detection, incidents or dependency graph.

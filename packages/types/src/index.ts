@@ -167,15 +167,17 @@ export interface RoleListResponse {
  * deliberately small: a resource appears here only once a permission guards it.
  */
 export type PermissionResource =
-  "organization" | "user" | "role" | "audit" | "security" | "asset" | "agent" | "policy";
+  "organization" | "user" | "role" | "audit" | "security" | "asset" | "agent" | "policy" | "action";
 
 /**
  * The action half of a permission identifier: what may be done.
  *
- * There is no `execute`, `approve` or `block`: those are runtime control-plane
- * actions, and this build can perform none of them.
+ * `execute` names exactly one capability: run an action from the registered
+ * catalogue through the action firewall (`action.execute`). There is deliberately no
+ * `agent.execute`, no `approve` and no `block` — this build runs registered actions,
+ * and it approves nothing.
  */
-export type PermissionAction = "read" | "create" | "update" | "delete" | "manage";
+export type PermissionAction = "read" | "create" | "update" | "delete" | "manage" | "execute";
 
 /**
  * One capability the application knows how to check.
@@ -555,11 +557,155 @@ export interface PolicyCreate {
   status?: "draft" | "active";
 }
 
+/* ── The action firewall (Phase 7) ──────────────────────────────────────── */
+
+/**
+ * The three outcomes the firewall can return, and the whole of its vocabulary.
+ *
+ * `require_approval` is a *value*: the API returns it (and a correlation id) and
+ * executes nothing. There is no approval workflow in this build.
+ */
+export type FirewallOutcome = "allow" | "deny" | "require_approval";
+
+/**
+ * Why the firewall decided what it decided. Stable codes, never prose.
+ *
+ * `authorization_denied` is Phase 5's answer, `policy_denied` and
+ * `policy_requires_approval` are Phase 6's, and the remaining two are about the
+ * request's own referents: a target this organization does not have, and an
+ * environment the target record does not confirm.
+ */
+export type FirewallReason =
+  | "allowed"
+  | "authorization_denied"
+  | "policy_denied"
+  | "policy_requires_approval"
+  | "target_not_found"
+  | "environment_mismatch";
+
+/**
+ * How much care a registered action warrants, published so the catalogue is
+ * reviewable. Not an authorization input: authorization is Phase 5's question and
+ * the context is Phase 6's.
+ */
+export type ActionSensitivity = "routine" | "controlled" | "sensitive";
+
+/** The row an action addresses, inside the caller's organization. */
+export interface ActionTarget {
+  resource: PermissionResource;
+  id: string;
+}
+
+/** What the firewall decided about one execution. */
+export interface FirewallDecision {
+  outcome: FirewallOutcome;
+  reason: FirewallReason;
+}
+
+/**
+ * The body of `POST /organizations/{organization_id}/actions/execute`.
+ *
+ * The mirror of `ActionExecuteRequest`.
+ *
+ * Every field here is something the client *knows*: a registered action identifier,
+ * a target, the environment it believes it is acting in, validated arguments and an
+ * idempotency key. There is no field for an executor, a module, a function, a URL,
+ * a command, a permission or an identity — the server takes those from the
+ * credential and the path, and a body that tries to state one is refused.
+ *
+ * `environment` is a statement, not evidence: it is checked against the environment
+ * the target row is recorded in, and the policy layer is evaluated against the
+ * recorded value.
+ */
+export interface ActionExecuteRequest {
+  action: string;
+  target_id: string;
+  environment: AssetEnvironment;
+  arguments?: Record<string, string | number | boolean | (string | number | boolean)[]>;
+  /** Required: a retry after a lost answer must not run the action twice. */
+  idempotency_key: string;
+  /** The agent this execution is attributed to, when an agent requested it. */
+  agent_id?: string | null;
+}
+
+/**
+ * What the adapter reported.
+ *
+ * The mirror of `ActionOutcomeRead`. `findings` is a closed set of codes, `details` is
+ * structured and adapter-specific,
+ * and `digest` is a stable hash of the action, the target and the outcome — so two
+ * executions can be compared without comparing prose. It identifies what was done,
+ * never who asked.
+ */
+export interface ActionOutcome {
+  summary: string;
+  findings: string[];
+  details: Record<string, unknown>;
+  adapter: string;
+  digest: string;
+}
+
+/**
+ * The result of an executed action.
+ *
+ * Returned only when the firewall said `allow`: every other outcome is an error whose
+ * code names the reason (`policy_denied`, `approval_required`, `unknown_action`, …).
+ * `replayed` is true when the idempotency key had already run the identical request —
+ * no adapter ran again.
+ */
+export interface ActionExecutionResponse {
+  organization_id: string;
+  action_id: string;
+  action_sensitivity: ActionSensitivity;
+  target: ActionTarget;
+  agent_id: string | null;
+  permission_required: string;
+  principal_role: string;
+  environment: AssetEnvironment;
+  firewall: FirewallDecision;
+  authorization: PolicyAuthorizationDecision;
+  policy: PolicyDecision;
+  effective: EffectivePolicyDecision;
+  executed: true;
+  replayed: boolean;
+  execution_id: string;
+  idempotency_key: string;
+  correlation_id: string;
+  executed_at: string;
+  result: ActionOutcome;
+}
+
 /* ── Errors ──────────────────────────────────────────────────────────────── */
 
-/** Machine-readable error codes returned by the API. */
+/**
+ * Machine-readable error codes returned by the API.
+ *
+ * A code is a stable identifier, so a client switches on it rather than matching
+ * message text. The action firewall's refusals are the reason the vocabulary is this
+ * specific: an action denied by a policy and one awaiting an approval are both 403,
+ * and they are not the same answer.
+ */
 export type ApiErrorCode =
-  "not_found" | "method_not_allowed" | "validation_error" | "internal_error" | `http_${number}`;
+  | "bad_request"
+  | "unauthorized"
+  | "forbidden"
+  | "not_found"
+  | "method_not_allowed"
+  | "conflict"
+  | "payload_too_large"
+  | "unsupported_media_type"
+  | "validation_error"
+  | "rate_limited"
+  | "internal_error"
+  | "service_unavailable"
+  | "unknown_action"
+  | "invalid_arguments"
+  | "policy_denied"
+  | "approval_required"
+  | "environment_mismatch"
+  | "idempotency_conflict"
+  | "execution_failed"
+  | `http_${number}`;
 
 /** Error envelope returned for every non-2xx API response. */
 export interface ApiErrorResponse {

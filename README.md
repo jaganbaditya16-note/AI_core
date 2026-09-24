@@ -16,12 +16,15 @@ environment, control what that AI is allowed to do, and monitor what it did, wit
 an intelligence layer (NVIDIA Nemotron via Nebius Token Factory) providing
 reasoning and recommendations.
 
-**Discovery is not automatic and control is not implemented.** Nothing in this
-repository scans a network or a cloud account: assets are recorded by a person
+**Discovery is not automatic, and enforcement is one narrow thing.** Nothing in
+this repository scans a network or a cloud account: assets are recorded by a person
 through the API, or by a future integration through the internal service boundary
-described in [`docs/inventory.md`](docs/inventory.md). Policies are evaluated and
-reported; nothing is enforced. The policy engine **evaluates** — the action firewall,
-in a later phase, enforces. There is no firewall, containment or monitoring, and
+described in [`docs/inventory.md`](docs/inventory.md). The policy engine
+**evaluates**; since Phase 7 the **action firewall** enforces — for one thing only:
+running a registered action from a closed, code-level catalogue, through a pipeline
+that authenticates, authorizes, evaluates a policy and decides before any adapter is
+called. Only `ALLOW` reaches an adapter. Nothing intercepts an agent, nothing is
+blocked at runtime, no approval is ever granted and nothing is monitored —
 [`docs/phase-0-scope.md`](docs/phase-0-scope.md) lists exactly what is absent.
 
 ## Architecture direction
@@ -77,8 +80,9 @@ database/
     versions/0003_assets.py
     versions/0004_agents.py
     versions/0005_policies.py
+    versions/0006_action_firewall.py
 tests/e2e/              Playwright smoke tests
-docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, ADRs
+docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, ADRs
 infrastructure/         docker-compose.yml
 scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
@@ -193,14 +197,16 @@ carries `X-Request-ID`.
   provider is integrated. Assets are registered by a person or by a future
   integration through an internal service boundary — see
   [docs/inventory.md](docs/inventory.md).
-- **No runtime enforcement.** Phase 6 evaluates policies and reports what they say;
-  it does not act on the answer. There is no action interception, no blocking, no
-  approval workflow, no suspension-as-a-policy-action and no kill switch — nothing
-  an agent does is stopped, because nothing runs here. A decision that says
-  `require_approval` records that approval is required and does nothing further. See
-  [docs/policies.md](docs/policies.md).
-- **No AI features.** No model provider is integrated; no action firewall, runtime
-  containment, behaviour monitoring or incident handling.
+- **No runtime enforcement of an agent.** Phase 7 admits one kind of execution —
+  a registered action from a closed catalogue, one entry of which is a read-only
+  posture assessment — and refuses everything else before an adapter is reached. There
+  is still no action interception, no blocking, no approval workflow, no
+  suspension-as-a-policy-action, no kill switch, no agent execution and no
+  containment: a policy decision that says `require_approval` states that approval is
+  required and does nothing further. See [docs/policies.md](docs/policies.md) and
+  [docs/actions.md](docs/actions.md).
+- **No AI features.** No model provider is integrated; no runtime containment,
+  behaviour monitoring or incident handling.
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
@@ -232,7 +238,8 @@ those records into a decision — without ever replacing the authorization layer
 - **Four policy permissions** — `policy.read` / `create` / `update` / `delete`, granted
   to owner, admin and (for read/create/update) security_admin. No `policy.execute`,
   `policy.approve` or `policy.kill`: evaluation is a read, and no role may make a policy
-  act. The role matrix is now 20 permissions / 63 grants.
+  act. Phase 6 left the matrix at 20 permissions / 63 grants; Phase 7 took it to
+  21 / 66 with `action.execute`.
 - **A documented dry run** — `POST .../policies/evaluate` reports the authorization
   decision, the policy decision and the effective answer side by side, and performs no
   action, records nothing and approves nothing.
@@ -242,6 +249,44 @@ those records into a decision — without ever replacing the authorization layer
 
 Design, condition language, precedence and boundaries:
 [docs/policies.md](docs/policies.md).
+
+## What Phase 7 adds
+
+The **action firewall**: the enforcement boundary between a decision and anything
+actually happening. A request to run one registered action is authenticated,
+authorized, evaluated against the organization's policies and decided — and only an
+`ALLOW` reaches an adapter.
+
+- **A closed action catalogue** — `ActionDefinition` / `ActionRegistry`: identifier,
+  resource type, description, input schema, target requirement and sensitivity, bound
+  to an adapter by identifier. One action ships: `agent.posture_check`, a read-only
+  assessment. An unknown identifier is a 422 that names the catalogue; nothing is
+  imported, resolved or interpreted to answer it.
+- **A typed request** — `ActionRequest` carries the tenant, the principal, the
+  membership, the optional attributed agent, the action, the target, the validated
+  arguments, the environment, the correlation id and an idempotency key. A client
+  cannot state the tenant, the caller, the permission, the executor or a command: the
+  body has no field for them and refuses extras.
+- **One typed decision** — `ALLOW` / `DENY` / `REQUIRE_APPROVAL`, with a stable
+  reason. Phase 5's denial and Phase 6's denial both map to `DENY`;
+  `require_approval` never executes; a missing target or an environment the record
+  does not confirm is a refusal. Mismatched inputs raise rather than decide.
+- **An adapter boundary** — one explicit interface, reached only through the
+  execution service, which re-checks the decision instead of trusting its caller.
+  `tests/test_actions_api.py` asserts structurally that the adapter registry is a
+  dependency of exactly one route.
+- **Idempotency, not a workflow** — a required key; a retry of the same request
+  returns the recorded answer without running the adapter again, a key reused for a
+  different request is a 409, and a failed run keeps its key.
+- **One new permission** — `action.execute` (owner, admin, security_admin), which is
+  also the policy target an organization writes a rule against. No `agent.execute`,
+  no wildcard, no per-action permission.
+- **Migration `0006_action_firewall`** — the idempotency ledger with the tenant
+  boundary, the key uniqueness and the status/outcome/error ties as constraints, plus
+  the one permission and the policy target vocabulary widened by one pair.
+
+Design, request model, decision flow and security guarantees:
+[docs/actions.md](docs/actions.md).
 
 ## What Phase 5 adds
 
@@ -407,9 +452,11 @@ Design and rationale: [docs/database.md](docs/database.md).
 3. ~~Authorization foundation~~ — **Phase 5** made permission and decision the
    vocabulary everything else builds on. ~~Policy engine~~ — **Phase 6** evaluates
    context and policy *through* this decision path rather than beside it, and
-   reports a decision without acting on one. Enforcement: action firewall,
-   approvals, kill switch — still to come, and the only place a policy decision
-   would ever be carried out.
+   reports a decision without acting on one. ~~Action firewall~~ — **Phase 7** became
+   the enforcement boundary: a registered action runs only when authorization,
+   policy and the firewall all allow it, and only through an adapter. Approvals and
+   the kill switch are still to come — they are the remaining places a policy
+   decision would be carried out.
 4. Monitoring: behaviour, anomalies, cost, audit, incidents (making `audit.read`
    and `security.read` mean something).
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic

@@ -36,15 +36,17 @@ Phase 5 documents the mapping instead of churning it.
 Scope discipline: the permissions below are exactly those the application can
 enforce today — the Phase 2 foundation (organization, membership, role and
 read-only oversight), the Phase 3 AI asset inventory, the Phase 4 agent registry,
-and the Phase 6 policy record. Permissions for the action firewall, agent
-execution, approvals and incidents are **not** declared yet: they belong to the
-phases that implement the resources behind them. A permission with nothing to guard
-would be a claim, not a control, and this table would become a document of
+the Phase 6 policy record and, with Phase 7, the action firewall. Permissions for
+agent execution, approvals and incidents are **not** declared yet: they belong to
+the phases that implement the resources behind them. A permission with nothing to
+guard would be a claim, not a control, and this table would become a document of
 intentions rather than a description of the system. There is deliberately no
 ``agent.execute``, ``agent.suspend``, ``agent.approve``, ``agent.control``,
 ``policy.execute``, ``policy.approve`` or ``firewall.block``: registering an agent
-is not the same capability as running one, and writing a policy is not the same
-capability as enforcing it.
+is not the same capability as running one, writing a policy is not the same
+capability as enforcing it, and the one capability Phase 7 adds is the narrowest
+one that describes what it does — *run one registered action through the firewall*
+(``action.execute``), not "do anything to anything".
 
 Phase 6 adds one resource, and four actions on it. ``policy.read`` /
 ``policy.create`` / ``policy.update`` / ``policy.delete`` guard the policy record
@@ -53,6 +55,17 @@ read of them — it stores nothing, changes nothing, and reveals nothing a
 ``policy.read`` holder cannot already read — so a separate permission for it would
 be privilege with no boundary behind it. Enforcement, when it arrives, needs a
 permission of its own; that is Phase 7's decision, not this one's.
+
+Phase 7 makes it. The action firewall runs *registered actions* — a closed,
+code-level catalogue with one entry — and the capability that guards it is
+``action.execute``: a new resource (``action``, the action registry) with one
+action on it (``execute``). It is deliberately not ``agent.execute``, which would
+claim the ability to run an agent (a later phase's capability, not this one's), and
+not a wildcard of any kind. Every other action on the ``action`` resource —
+``approve``, ``kill``, ``block``, ``read`` — is absent, because this build can do
+none of them. Because a permission is also a *policy target*, ``action.execute`` is
+the pair an organization writes a policy against when it wants to constrain what
+its members may execute.
 """
 
 from __future__ import annotations
@@ -120,15 +133,20 @@ class Resource(StrEnum):
     ASSET = "asset"
     AGENT = "agent"
     POLICY = "policy"
+    #: The action registry itself: the closed catalogue of actions this build can
+    #: run. Phase 7 added it, together with :attr:`Action.EXECUTE`.
+    ACTION = "action"
 
 
 class Action(StrEnum):
     """The action half of a permission: what may be done to the resource.
 
-    Only the actions this build can perform. There is no ``execute``, ``approve``,
-    ``block`` or ``intercept``: those are runtime control-plane actions, and no
-    part of this build can perform one — an action vocabulary that listed them
-    would advertise enforcement that does not exist.
+    Only the actions this build can perform. ``execute`` arrived with Phase 7, and
+    it means one narrow thing: *run one action from the registered catalogue through
+    the action firewall*. There is still no ``approve``, ``block``, ``intercept`` or
+    ``kill``, and still no way to start, stop or control an agent at runtime — an
+    action vocabulary that listed those would advertise enforcement that does not
+    exist.
     """
 
     READ = "read"
@@ -136,6 +154,7 @@ class Action(StrEnum):
     UPDATE = "update"
     DELETE = "delete"
     MANAGE = "manage"
+    EXECUTE = "execute"
 
 
 def parse_permission_code(code: str) -> tuple[Resource, Action]:
@@ -196,6 +215,7 @@ class Permission(StrEnum):
     POLICY_CREATE = "policy.create"
     POLICY_UPDATE = "policy.update"
     POLICY_DELETE = "policy.delete"
+    ACTION_EXECUTE = "action.execute"
 
     @classmethod
     def parse(cls, code: str) -> Permission:
@@ -248,26 +268,33 @@ class RoleCode(StrEnum):
 #: - ADMIN          — general administration, stopping short of ``role.manage``
 #:                    (deciding who may do what is an ownership decision) and of
 #:                    the security/audit reads (oversight is not administration).
-#:                    It administers the policy record in full.
+#:                    It administers the policy record in full, and with Phase 7
+#:                    it may run a registered action through the firewall:
+#:                    operating what the organization has is administration's job.
 #: - SECURITY_ADMIN — security posture, the audit trail, and *recording* a
-#:                    containment decision in the inventory (it may read and update
-#:                    assets; it may not create or delete records). Enforcing
-#:                    containment at runtime is a later phase with its own
-#:                    permission — the inventory state is a record, not an action.
-#:                    The registry follows the same rule: it reads agents and may
-#:                    record a lifecycle change, but it does not create or delete
-#:                    identities. Phase 6 makes one deliberate exception for the
-#:                    policy record: writing a policy *is* recording a containment
-#:                    decision (a deny, a threshold, an approval requirement), which
-#:                    is this role's job — so it may read, create and update
-#:                    policies, while deleting one stays with the owner and the
-#:                    administrator, exactly as deleting an asset or an agent does.
+#:                    containment decision in the inventory (it may read and
+#:                    update assets; it may not create or delete records).
+#:                    Enforcing containment at runtime is a later phase with its
+#:                    own permission — the inventory state is a record, not an
+#:                    action. The registry follows the same rule: it reads agents
+#:                    and may record a lifecycle change, but it does not create
+#:                    or delete identities. Phase 6 makes one deliberate
+#:                    exception for the policy record: writing a policy *is*
+#:                    recording a containment decision (a deny, a threshold, an
+#:                    approval requirement), which is this role's job — so it may
+#:                    read, create and update policies, while deleting one stays
+#:                    with the owner and the administrator, exactly as deleting
+#:                    an asset or an agent does. Phase 7 adds ``action.execute``:
+#:                    examining a posture by running a registered, read-only
+#:                    assessment is this role's work, and a policy may still deny
+#:                    it, or require an approval, by context.
 #: - AI_ADMIN       — AI asset and agent administration: registers agents and
 #:                    maintains their records and versions, but does not delete
 #:                    them (removing an identity is an administrative decision,
-#:                    not a stewardship one). It holds no policy permission on
-#:                    purpose: the parties whose work a policy constrains do not
-#:                    write the constraint, and an AI administrator that governs
+#:                    not a stewardship one). It holds no policy permission and no
+#:                    ``action.execute``, on purpose: the parties whose work a
+#:                    policy constrains do not write the constraint *or* run the
+#:                    actions it governs, and an AI administrator that governs
 #:                    itself is not governed.
 #: - ANALYST        — reads and analyses security information; no management
 #:                    permission at all. Policies are governance configuration, and
@@ -298,6 +325,7 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.POLICY_CREATE,
                 Permission.POLICY_UPDATE,
                 Permission.POLICY_DELETE,
+                Permission.ACTION_EXECUTE,
             }
         ),
         RoleCode.SECURITY_ADMIN: frozenset(
@@ -313,6 +341,7 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.POLICY_READ,
                 Permission.POLICY_CREATE,
                 Permission.POLICY_UPDATE,
+                Permission.ACTION_EXECUTE,
             }
         ),
         RoleCode.AI_ADMIN: frozenset(

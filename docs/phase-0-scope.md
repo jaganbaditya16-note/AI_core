@@ -49,12 +49,15 @@ supply-chain security. (Phase 3 records the inventory and Phase 4 registers agen
 with an identity; model and tool *registries*, the dependency graph, automatic
 discovery and supply-chain analysis are still absent.)
 
-**Control:** permissions, policy engine, policy-as-code, action firewall,
-approval workflows, kill switch, MCP firewall, model routing. (Phase 2 built
-explicit permissions and role-based grants and Phase 5 the resource/action
-vocabulary and the deterministic authorization decision; there is still no policy
-language, no rule store, no interception, no approval and no kill switch — nothing
-in this build can stop an action, only record it.)
+**Control:** permissions, policy engine, policy-as-code, action firewall, approval
+workflows, kill switch, MCP firewall, model routing. (Phase 2 built explicit
+permissions and role-based grants, Phase 5 the resource/action vocabulary and the
+deterministic authorization decision, Phase 6 the policy language and its rule store,
+and Phase 7 the action firewall: a registered action runs only when every layer
+allows it, and only through one adapter. There is still no interception, no approval
+workflow, no kill switch and no model routing — nothing here can stop an agent, and
+the one action that exists is a read-only assessment. See
+[actions.md](actions.md).)
 
 **Monitoring & response:** monitoring, audit system, anomaly detection, risk
 engine, incident management, cost engine, metric dashboards.

@@ -48,9 +48,10 @@ ORG = "/organizations/{organization_id}"
 #: Every tenant-scoped route and the permission it declares. Phase 3 added the six
 #: inventory routes and Phase 4 the six registry routes; Phase 5 added no route at
 #: all — it changed how a requirement is *decided* (a resource/action vocabulary and
-#: a structured decision), not what the surface is. The list stays literal on
-#: purpose, because a literal expectation is what notices when a route acquires a
-#: permission it should not have, or loses the one it needs.
+#: a structured decision), not what the surface is. Phase 7 adds exactly one: the
+#: action firewall's execution endpoint, guarded by ``action.execute``. The list stays
+#: literal on purpose, because a literal expectation is what notices when a route
+#: acquires a permission it should not have, or loses the one it needs.
 EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     ("GET", "/organizations/{organization_id}"): {Permission.ORGANIZATION_READ},
     ("GET", "/organizations/{organization_id}/members"): {Permission.USER_READ},
@@ -82,6 +83,11 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     },
     ("PATCH", "/organizations/{organization_id}/policies/{policy_id}"): {Permission.POLICY_UPDATE},
     ("DELETE", "/organizations/{organization_id}/policies/{policy_id}"): {Permission.POLICY_DELETE},
+    # The one route that can execute something, and the one permission that guards it.
+    # There is no per-action permission: the *authorization* question (may this person
+    # run registered actions here?) is one question, and the contextual one (should this
+    # action, on this target, run?) is Phase 6's, through a policy on this target.
+    ("POST", "/organizations/{organization_id}/actions/execute"): {Permission.ACTION_EXECUTE},
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
@@ -132,9 +138,22 @@ def _sweep(
     agent_route = "/agents" in path
     policy_route = "/policies" in path
     evaluate_route = path.endswith("/policies/evaluate")
+    execute_route = path.endswith("/actions/execute")
     body: dict[str, Any] | None = None
     if method == "POST":
-        if evaluate_route:
+        if execute_route:
+            # Well-formed like the rest: a registered action, a target this
+            # organization does not have, the environment the sweeps register in,
+            # and a key. The answer is then a 404 about the target, which is the
+            # point of the sweep — authorization is what is under test.
+            body = {
+                "action": "agent.posture_check",
+                "target_id": str(uuid.uuid4()),
+                "environment": "production",
+                "arguments": {},
+                "idempotency_key": f"sweep-{uuid.uuid4().hex}",
+            }
+        elif evaluate_route:
             body = {
                 "resource": "agent",
                 "action": "update",
@@ -207,6 +226,15 @@ def test_the_sensitive_permissions_are_held_by_the_roles_that_need_them() -> Non
         RoleCode.SECURITY_ADMIN,
         RoleCode.ANALYST,
     }
+    # Running a registered action is administration, on purpose: the party that may
+    # examine a posture through a registered, read-only assessment is the administrator
+    # and the security administrator — never the AI administrator, whose work the
+    # policies constrain, and never a reader or an analyst.
+    assert _roles_holding(Permission.ACTION_EXECUTE) == {
+        RoleCode.OWNER,
+        RoleCode.ADMIN,
+        RoleCode.SECURITY_ADMIN,
+    }
     # Reading the role catalog is not the same as managing it: administration sees
     # what roles exist, and nobody else needs the catalog to do their job.
     assert _roles_holding(Permission.ROLE_READ) == {RoleCode.OWNER, RoleCode.ADMIN}
@@ -261,6 +289,8 @@ def test_the_owner_reaches_every_route(
         json={"resource": "agent", "action": "update", "facts": {"environment": "production"}},
     )
     assert evaluated.status_code == 200, evaluated.text
+    executed = _sweep(client, "POST", f"{ORG}/actions/execute", identity.organization_id)
+    assert executed.status_code == 404, executed.text
     asset_id = uuid.UUID(asset.json()["id"])
     agent_id = uuid.UUID(agent.json()["id"])
     identity_id = uuid.UUID(agent.json()["identity_id"])
@@ -380,6 +410,7 @@ def test_a_security_admin_gets_security_permissions_and_nothing_wider(
         Permission.POLICY_READ.value,
         Permission.POLICY_CREATE.value,
         Permission.POLICY_UPDATE.value,
+        Permission.ACTION_EXECUTE.value,
     }
 
     # Reading the member directory is part of investigating an incident.

@@ -3,10 +3,20 @@
 Phase 5's claim is that authorization is written in a *vocabulary* rather than in
 loose strings: every requirement is a ``resource.action`` identifier whose halves
 come from closed enums, and anything else is refused instead of being carried into
-a check. These tests keep that true, including the negative half of it — that
-``policy``, ``execute``, ``approve`` and their relatives are **absent** until the
-phase that implements them, because a vocabulary that lists actions nothing can
-perform advertises enforcement that does not exist.
+a check. These tests keep that true, including the negative half of it: ``approve``,
+``kill``, ``block`` and their relatives are **absent** until the phase that implements
+them, because a vocabulary that lists actions nothing can perform advertises
+enforcement that does not exist.
+
+Phase 7 is where ``execute`` stopped being one of those words, and the vocabulary grew
+by exactly the pair that describes it: the ``action`` resource (the registered action
+catalogue) and ``action.execute`` (run one of them through the firewall). Two things
+follow, and both are asserted below rather than assumed: ``execute`` exists as an
+*action* on that resource and on no other — there is no ``agent.execute`` and no
+``policy.execute``, because this phase runs registered actions, not agents or
+policies — and ``parse_permission_code`` now *recognizes* a well-formed pair this build
+does not declare, which is precisely why :meth:`Permission.parse` is the stricter door
+and the one every caller uses.
 
 Two kinds of test live here:
 
@@ -61,15 +71,34 @@ REFUSED_CODES = (
     "agent.read ",
     " agent.read",
     "agent..read",
-    "agent.execute",
     "policy",
-    "policy.execute",
     "policy.approve",
     "policy.kill",
     "policy.evaluate",
     "incident.read",
     "firewall.block",
     "tool.invoke",
+    "action.approve",
+    "action.kill",
+    "action.block",
+    "action.execute_all",
+    "agent.firewall.block",
+)
+
+#: Well-formed pairs this build does **not** declare: both halves are in the vocabulary
+#: — ``execute`` became one in Phase 7 — and the pair is not a permission, so
+#: :meth:`Permission.parse` refuses it. Listed separately because the *other* door
+#: (:func:`parse_permission_code`) is allowed to recognize them: telling "this is not a
+#: permission code" apart from "this is not a permission" is what lets a route or a
+#: policy report a malformed target differently from an unsupported one. What must never
+#: happen is one of them being *treated as* a capability, which is what the test asserts.
+UNDECLARED_PAIRS: tuple[tuple[str, Action], ...] = (
+    ("agent.execute", Action.EXECUTE),
+    ("policy.execute", Action.EXECUTE),
+    ("asset.execute", Action.EXECUTE),
+    ("role.execute", Action.EXECUTE),
+    ("action.read", Action.READ),
+    ("action.create", Action.CREATE),
 )
 
 
@@ -132,6 +161,14 @@ def test_permissions_for_resource_returns_that_resource_and_refuses_an_unknown_o
         permission.resource is Resource.POLICY for permission in permissions_for_resource("policy")
     )
 
+    # One permission on the action catalogue: running a registered action. Not a
+    # catalogue of verbs — an identifier, an argument schema and an adapter decide what
+    # may run, and one permission decides who may ask.
+    assert permissions_for_resource(Resource.ACTION) == (Permission.ACTION_EXECUTE,)
+    assert all(
+        permission.resource is Resource.ACTION for permission in permissions_for_resource("action")
+    )
+
     with pytest.raises(ValueError, match="unknown resource"):
         permissions_for_resource("firewall")
 
@@ -145,9 +182,54 @@ def test_an_undeclared_permission_code_is_refused(code: str) -> None:
 
 @pytest.mark.parametrize("code", REFUSED_CODES)
 def test_an_undeclared_code_cannot_be_parsed_into_a_resource_and_action(code: str) -> None:
-    """The other door is shut too: parsing alone does not accept a future action."""
+    """A malformed code is refused by both doors: parsing alone accepts no future action."""
     with pytest.raises(UnknownPermissionError):
         parse_permission_code(code)
+
+
+@pytest.mark.parametrize(("code", "action"), UNDECLARED_PAIRS)
+def test_a_well_formed_pair_this_build_does_not_declare_is_still_not_a_permission(
+    code: str, action: Action
+) -> None:
+    """``execute`` exists on ``action``, and the vocabulary knows it — the catalogue does not.
+
+    The halves are recognized (that is what :func:`parse_permission_code` is for), and the
+    pair is not a permission, so declaring it is impossible and using it as one is
+    impossible: only :class:`Permission` members ever reach an authorization decision.
+    """
+    with pytest.raises(UnknownPermissionError):
+        Permission.parse(code)
+
+    resource, parsed_action = parse_permission_code(code)
+    assert parsed_action is action
+    declared_pairs = {(permission.resource, permission.action) for permission in Permission}
+    assert (resource, parsed_action) not in declared_pairs
+
+    # And in the direction that matters: nothing that *is* a permission may share the
+    # pair of an undeclared one.
+    assert (resource, parsed_action) not in {
+        (permission.resource, permission.action) for permission in all_permissions()
+    }
+
+
+def test_the_only_resource_that_may_be_executed_is_the_action_catalogue() -> None:
+    """The precision Phase 7 claims, asserted: one resource, one action, no wildcard.
+
+    ``execute`` was added as an action *and* as a permission on exactly one resource. A
+    second resource growing it — ``agent.execute``, ``policy.execute`` — is the change
+    this test exists to catch, because it would quietly turn "run a registered action"
+    into "run an agent" or "enforce a policy", neither of which this build can do.
+    """
+    resources_with_execute = {
+        permission.resource for permission in Permission if permission.action is Action.EXECUTE
+    }
+    assert resources_with_execute == {Resource.ACTION}
+    assert Permission.ACTION_EXECUTE.value == "action.execute"
+    assert not [
+        permission
+        for permission in Permission
+        if "*" in permission.value or permission.value.endswith(".all")
+    ]
 
 
 def test_a_refusal_is_a_value_error() -> None:
@@ -156,21 +238,36 @@ def test_a_refusal_is_a_value_error() -> None:
 
 
 def test_the_vocabulary_declares_no_future_phase_action() -> None:
-    """Runtime control belongs to the phases that implement it, not to this one."""
+    """Runtime control belongs to the phases that implement it, not to this one.
+
+    ``execute`` graduated in Phase 7 — it names running a registered action through the
+    firewall, and nothing else. Every other control-plane verb is still absent, and the
+    permission codes are checked as well as the enum, because a permission is where such
+    a verb would actually appear.
+    """
     assert {action.value for action in Action} == {
         "read",
         "create",
         "update",
         "delete",
         "manage",
+        "execute",
     }
-    forbidden = {"execute", "approve", "kill", "block", "intercept", "control", "scan"}
+    forbidden = {"approve", "kill", "block", "intercept", "control", "scan", "suspend"}
     assert not forbidden & {action.value for action in Action}
     assert not [code for code in (p.value for p in Permission) if code.split(".")[-1] in forbidden]
+    # One resource may be executed, and it is the action catalogue itself.
+    assert RESOURCE_ACTIONS[Resource.ACTION] == frozenset({Action.EXECUTE})
 
 
 def test_the_vocabulary_declares_no_future_phase_resource() -> None:
-    """A resource appears when a permission guards it, which is when it exists."""
+    """A resource appears when a permission guards it, which is when it exists.
+
+    ``action`` arrived with Phase 7 and guards the registered action catalogue — the
+    list of things this build may be asked to run. A resource is a namespace of real
+    capabilities, so every member below is one: the resources still absent are the ones
+    whose phase has not happened.
+    """
     assert {resource.value for resource in Resource} == {
         "organization",
         "user",
@@ -180,6 +277,7 @@ def test_the_vocabulary_declares_no_future_phase_resource() -> None:
         "asset",
         "agent",
         "policy",
+        "action",
     }
     forbidden = {
         "incident",
@@ -189,9 +287,12 @@ def test_the_vocabulary_declares_no_future_phase_resource() -> None:
         "mcp_server",
         "firewall",
         "session",
-        "action",
+        "enforcement",
+        "approval",
+        "kill_switch",
     }
     assert not forbidden & {resource.value for resource in Resource}
+    assert permissions_for_resource(Resource.ACTION) == (Permission.ACTION_EXECUTE,)
 
 
 def test_the_code_pattern_is_the_same_in_the_vocabulary_and_in_the_model() -> None:
@@ -239,6 +340,7 @@ EXPECTED_ROLE_MATRIX: dict[RoleCode, set[Permission]] = {
         Permission.POLICY_CREATE,
         Permission.POLICY_UPDATE,
         Permission.POLICY_DELETE,
+        Permission.ACTION_EXECUTE,
     },
     RoleCode.SECURITY_ADMIN: {
         Permission.ORGANIZATION_READ,
@@ -252,6 +354,7 @@ EXPECTED_ROLE_MATRIX: dict[RoleCode, set[Permission]] = {
         Permission.POLICY_READ,
         Permission.POLICY_CREATE,
         Permission.POLICY_UPDATE,
+        Permission.ACTION_EXECUTE,
     },
     RoleCode.AI_ADMIN: {
         Permission.ORGANIZATION_READ,
@@ -282,7 +385,10 @@ def test_the_role_matrix_is_exactly_the_documented_one() -> None:
 
     Phase 5 reviewed the matrix against the resources that exist rather than
     re-deriving it from the roadmap, and kept it: every grant below answers a
-    capability the application can actually enforce. Phase 6 added the policy
+    capability the application can actually enforce. Phase 7 added ``action.execute``
+    to the owner, the administrator and the security administrator — running a
+    registered action is administration and security work — and deliberately not to the
+    AI administrator, whose work a policy constrains. Phase 6 added the policy
     namespace to three roles, each for a stated reason — the security administrator
     writes a policy (recording a containment decision is its job) but cannot delete
     one, administration manages policies outright, the AI administrator holds none

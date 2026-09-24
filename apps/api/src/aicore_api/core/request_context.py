@@ -24,6 +24,17 @@ def new_request_id() -> str:
     return uuid.uuid4().hex
 
 
+def is_safe_request_id(candidate: object) -> bool:
+    """Whether ``candidate`` is a value this build would accept as a request id.
+
+    Exposed because a correlation id travels further than the response header: the
+    action firewall stamps one onto a typed :class:`~aicore_api.core.actions.ActionRequest`
+    and refuses anything the request layer could not have produced. A value that fails
+    this check did not come from a request, so it is not a correlation id.
+    """
+    return isinstance(candidate, str) and bool(_SAFE_ID.match(candidate))
+
+
 def sanitize_request_id(candidate: str | None) -> str:
     """Return the client-supplied id if it is safe, otherwise a fresh one."""
     if candidate is not None and _SAFE_ID.match(candidate):

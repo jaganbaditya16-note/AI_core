@@ -18,9 +18,11 @@ authorize(principal, organization, permission[, scope]) → AuthorizationDecisio
 
 The decision is deterministic, computed from database facts, and carries a
 machine-readable reason. Nothing in this path consults a policy engine, a network
-service or a model. **Phase 5 is a foundation, not enforcement**: it does not add
-a runtime control plane, an action firewall, approvals or a policy language, and
-no route gained a capability it did not have before.
+service or a model. **Phase 5 is a foundation, not enforcement**: it did not add a
+runtime control plane, approvals or a policy language, and no route gained a
+capability it did not have. (Phase 6 added the policy language *on top of* this
+decision, and Phase 7 added the action firewall that acts on it — neither changed
+the vocabulary or the decision itself; see [actions.md](actions.md).)
 
 ## The vocabulary
 
@@ -220,10 +222,15 @@ analyst 4, viewer 3.
 
 > **Phase 6 extended this catalog** with `policy.read` / `policy.create` /
 > `policy.update` / `policy.delete`, granted to owner, admin and (read/create/update
-> only) security_admin: **20 permissions, 63 grants**, head `0005_policies`. The
-> matrix in this document is the Phase 5 review and is left as it was written; the
-> policy grants and the reasoning behind them are in
-> [policies.md](policies.md#who-may-manage-policies).
+> only) security_admin. **Phase 7 added one more**: `action.execute`, the permission
+> that guards the action firewall, held by owner, admin and security_admin — the
+> catalog is now **21 permissions, 66 grants**, head `0006_action_firewall`, with the
+> per-role totals owner 21, admin 18, security_admin 12, ai_admin 8, analyst 4,
+> viewer 3. The matrix in this document is the Phase 5 review and is left as it was
+> written; the policy grants are in
+> [policies.md](policies.md#who-may-manage-policies) and the action grants — including
+> why the AI administrator deliberately does not hold `action.execute` — in
+> [actions.md](actions.md).
 
 `test_the_role_matrix_is_exactly_the_documented_one` spells the matrix out a second
 time, literally, on purpose: the existing parity test would still pass if somebody
@@ -252,8 +259,9 @@ Nothing was added because nothing was missing: a redundant constraint or an
 unused column would be a claim those phases could not justify. Phase 6 consequently
 added no catalog *schema* either — only the four permission rows and their grants,
 in its own migration (`0005_policies`), which is compared against
-`core/permissions.py` by `tests/test_migrations.py`. The catalog now holds **20
-permissions, 6 roles, 63 grants**.
+`core/permissions.py` by `tests/test_migrations.py`. Phase 7 added one permission and
+three grants the same way, in `0006_action_firewall`. The catalog holds **21
+permissions, 6 roles, 66 grants**.
 
 ## API impact
 
@@ -289,7 +297,7 @@ migration, not a runtime mutation.
 | Guarantee | Test |
 | --- | --- |
 | Every permission is a validated `resource.action` pair, unique | `test_permissions.py` |
-| An undeclared or malformed code is refused (17 shapes) | `test_an_undeclared_permission_code_is_refused` |
+| An undeclared or malformed code is refused (23 shapes today; 17 when Phase 5 reviewed it, 20 after Phase 6) | `test_an_undeclared_permission_code_is_refused` |
 | No future-phase action or resource is declared | `test_the_vocabulary_declares_no_future_phase_*` |
 | Code catalogue ≡ seeded rows, both directions | `test_the_seeded_catalog_holds_exactly_the_declared_permissions` |
 | The role matrix is exactly the documented one | `test_the_role_matrix_is_exactly_the_documented_one` |
@@ -312,8 +320,10 @@ bash scripts/verify.sh      # lint, format, typecheck, tests, secrets, compose
   no policy document, no decision log beyond the structured decision object.
 - **No runtime enforcement.** Nothing intercepts an action, blocks a tool or stops
   an agent. `status: suspended` remains a record.
-- **No approvals, no kill switch, no action firewall.** Those arrive with the
-  phases that implement them.
+- **No approvals, no kill switch.** Those arrive with the phases that implement
+  them. The action firewall exists since Phase 7, and it is not a fourth decision
+  layer: it consumes this phase's decision object, refuses anything that is not an
+  `ALLOW`, and runs a registered action through [actions.md](actions.md).
 - **No LLM anywhere in the decision path** — asserted structurally, not by
   intention.
 - **No ABAC engine and no attribute rules.** The only context a decision reads is

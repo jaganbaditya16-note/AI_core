@@ -22,8 +22,10 @@ vocabulary, version metadata, a validated lifecycle, an owner who is a member of
 the same organization, and an API to register, read, change and remove agents.
 
 **It is not** agent execution or control. There is no runtime, no session, no tool
-invocation, no permission grant to an agent, no policy, no interception and no kill
-switch. Specifically:
+invocation, no permission grant to an agent, no interception and no kill switch.
+(Phase 6's policies and Phase 7's action firewall constrain what a *member* may ask
+this system to run; neither of them reaches into an agent or constrains what an agent
+does.) Specifically:
 
 - `status: suspended` is a **recorded state**. It does not stop an agent, revoke a
   credential, block a tool or interrupt a session — nothing in this build does any
@@ -363,9 +365,13 @@ Stated plainly, because a registry that overstates itself is worse than a small 
 
 - **No execution and no runtime control.** Nothing starts, stops, suspends,
   contains or interrupts an agent. `status` is a record.
-- **No permission engine, no policy engine, no action firewall, no approvals, no
-  kill switch, no monitor, no anomaly detection.** Those are later phases, and no
-  endpoint, permission or type in this build pretends otherwise.
+- **No permission engine, no policy engine, no approvals, no kill switch, no
+  monitor, no anomaly detection.** Those are other phases' work, and no endpoint,
+  permission or type in this build pretends otherwise. Phase 7 added an action
+  firewall, and the distinction it draws is the registry's own line: `/actions/execute`
+  runs an *action* from a closed catalogue (one read-only assessment today), and
+  nothing anywhere executes, starts, stops, contains or interrupts an *agent* — see
+  [actions.md](actions.md).
 - **No tool or model invocation, and no dependency graph.** Agents do not reference
   each other, tools or models.
 - **No authentication for agents.** An identity is an identifier, not a credential;

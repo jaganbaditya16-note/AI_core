@@ -774,8 +774,15 @@ def test_the_registry_exposes_no_runtime_control() -> None:
     """Registry state, not control: nothing here starts, stops, blocks or contains.
 
     The OpenAPI document is the API's own statement of what it offers, so this is
-    asserted against it — a route that executed, controlled or contained an agent in
-    a later phase would have to add itself there and fail this test.
+    asserted against it — a route that controlled or contained an agent would have to
+    add itself there and fail this test.
+
+    Phase 7 made one word in that list real, and the distinction it draws is the whole
+    point: ``/actions/execute`` executes an *action* from a closed catalogue (one
+    read-only assessment today), and nothing in the application executes, starts,
+    stops, suspends or quarantines an *agent*. The agent registry is still exactly
+    three routes, and the assertion below is what keeps "the registry cannot control
+    an agent" from quietly becoming false.
     """
     paths = create_app().openapi()["paths"]
     registry_paths = {path for path in paths if "/agents" in path}
@@ -784,6 +791,13 @@ def test_the_registry_exposes_no_runtime_control() -> None:
         f"{_AGENT_PARENT}/identity/{{identity_id}}",
         f"{_AGENT_PARENT}/{{agent_id}}",
     }
-    forbidden = ("execute", "run", "start", "stop", "kill", "quarantine", "control", "suspend")
+    forbidden = ("run", "start", "stop", "kill", "quarantine", "control", "suspend")
     for path in paths:
         assert not any(word in path.lower() for word in forbidden), path
+
+    # ``execute`` appears exactly once in the whole surface, and it is the action
+    # firewall — not a route about agents. A client reading the document cannot
+    # conclude that an agent may be executed, and cannot reach one by guessing a path.
+    executing = sorted(path for path in paths if "execute" in path)
+    assert executing == ["/organizations/{organization_id}/actions/execute"]
+    assert not any("agent" in path for path in executing)

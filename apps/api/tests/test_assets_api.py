@@ -603,8 +603,10 @@ def test_no_role_holds_permissions_this_build_did_not_introduce() -> None:
     inventory permissions; Phase 4 added the four registry permissions, and the
     agent namespace holds *only* those — registering an agent is not executing one.
     Phase 6 added the four policy permissions, and that namespace holds only those
-    too: evaluating a policy is not executing an action, and acting on a decision is
-    the action firewall's job in a later phase.
+    too: evaluating a policy is not executing an action. Phase 7 added the one
+    permission that *is* the action firewall's surface — ``action.execute``, the single
+    member of the ``action`` namespace, which names running a registered action and
+    nothing else (no ``action.approve``, no ``action.block``).
     """
     assert {permission for permission in Permission if permission.value.startswith("asset.")} == {
         Permission.ASSET_READ,
@@ -626,13 +628,20 @@ def test_no_role_holds_permissions_this_build_did_not_introduce() -> None:
     }
     assert set(ROLE_PERMISSIONS) == set(RoleCode)
 
+    assert {permission for permission in Permission if permission.value.startswith("action.")} == {
+        Permission.ACTION_EXECUTE,
+    }
+
     # The permission vocabulary contains nothing about executing, suspending,
-    # containing or approving an agent, or about firewalls, incidents and runtime
-    # actions: those are later phases, and a permission for them now would be a claim
-    # the application cannot honour. The policy namespace is the sharpest case — it
-    # exists so a policy can be written, and deliberately stops there: no permission
-    # here may execute, approve, enforce or evaluate anything.
-    forbidden_prefixes = ("firewall.", "incident.", "action.")
+    # containing or approving an *agent*, or about firewalls, incidents, approvals and
+    # runtime control: those are later phases, and a permission for them now would be a
+    # claim the application cannot honour. "Executing" graduated in Phase 7 under a
+    # deliberately different noun — ``action.execute`` runs a *registered action*, which
+    # is why ``agent.execute`` stays forbidden below while the ``action`` namespace has
+    # exactly one member. The policy namespace is the sharpest case — it exists so a
+    # policy can be written, and deliberately stops there: no permission here may
+    # execute, approve, enforce or evaluate anything.
+    forbidden_prefixes = ("firewall.", "incident.", "approval.", "enforcement.")
     forbidden_policy_codes = (
         "policy.execute",
         "policy.approve",

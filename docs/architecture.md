@@ -321,8 +321,9 @@ modules; they do not reshape these boundaries.
    Automatic discovery (cloud, network, endpoint integrations), agent execution and
    the dependency graph remain.
 3. ~~Authorization foundation~~ — **Phase 5**: decision object, resource/action
-   vocabulary, instance authorization. Policy engine and action firewall
-   (deterministic decisions) build on it.
+   vocabulary, instance authorization. ~~Policy engine~~ — **Phase 6**, and
+   ~~action firewall~~ — **Phase 7**: both are deterministic decisions built on it,
+   and the firewall is the only place a decision is carried out.
 4. Audit, monitoring, anomalies, incidents.
 5. Intelligence layer (Nemotron / Nebius) as an *advisor* that proposes; the
    deterministic services continue to decide.

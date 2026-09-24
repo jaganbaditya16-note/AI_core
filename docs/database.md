@@ -1,13 +1,15 @@
-# Database and multi-tenancy (Phases 1–6)
+# Database and multi-tenancy (Phases 1–7)
 
 Phase 1 added the PostgreSQL foundation and the tenant boundary every later phase
 builds on. Phase 2 adds the identity and access tables that turn that boundary
 into something a user can actually be authorized inside: **users, roles,
 permissions, role-permission grants, memberships and API tokens**. Phase 3 added
 the inventory (**assets**), Phase 4 the agent registry (**agents**) that gives one
-kind of asset a stable identity, and Phase 6 the policy record (**policies** and
+kind of asset a stable identity, Phase 6 the policy record (**policies** and
 **policy_versions**): the identity and life of a policy, and its append-only
-history of definitions.
+history of definitions, and Phase 7 the execution ledger (**action_executions**) that
+makes a retried request return the recorded answer instead of running an action
+twice.
 
 Models, tools, data sources, events and incidents still do not exist as separate
 tables. What exists is the set of conventions and the isolation mechanism they
@@ -164,8 +166,17 @@ have been a claim it could not justify.
 `policy.create`, `policy.update`, `policy.delete` — in migration `0005_policies`,
 which is also the first migration to change the seeded catalogue since Phase 4. The
 code catalog and the seeded rows are still compared in both directions by
-`tests/test_migrations.py`, so the two copies cannot drift: 20 permissions, 6 roles
-and 63 grants.
+`tests/test_migrations.py`, so the two copies cannot drift.
+
+**Phase 7 added one permission and three grants** — `action.execute`, held by owner,
+admin and security_admin — in migration `0006_action_firewall`, which is also the
+first migration to change the *policy target* vocabulary since Phase 6: a permission
+is what a policy may be written about, so `policy_versions.resource` and
+`policy_versions.action` had to accept `'action'` and `'execute'`, and their `CHECK`
+constraints were replaced (PostgreSQL has no "add a value to a `CHECK`") with the
+full lists written out as literals. The seed, the code catalog and the constraints
+are still compared in both directions by `tests/test_migrations.py` and
+`tests/test_policies.py`: **21 permissions, 6 roles, 66 grants**.
 
 ## The asset inventory table (Phase 3)
 
@@ -292,6 +303,47 @@ column set exactly.
 every other tenant-owned table: a statement that does not filter on
 `organization_id` is refused before it reaches PostgreSQL.
 
+## The idempotency ledger table (Phase 7)
+
+`action_executions` exists for one purpose, and the schema says so: a client that
+retries a request whose answer it never saw must get the same answer instead of a
+second execution. One row per idempotency key per organization, holding what the
+admitted run reported.
+
+```sql
+aicore.action_executions
+├── id                   uuid  PK          gen_random_uuid()
+├── organization_id      uuid  NOT NULL    FK → organizations(id)  ON DELETE RESTRICT
+├── idempotency_key      varchar(128)      CHECK (opaque bounded token)
+├── action_id            varchar(64)       CHECK (identifier shape)
+├── target_id            uuid  NOT NULL    ← deliberately not a foreign key
+├── request_fingerprint  varchar(64)       CHECK (char_length = 64)   sha-256 of what was asked
+├── status               varchar(16)       CHECK (reserved | executed | failed)
+├── outcome              jsonb  NULL       CHECK (status = 'executed') = (outcome IS NOT NULL)
+├── error_code           varchar(64) NULL  CHECK (status = 'failed')   = (error_code IS NOT NULL)
+├── created_at           timestamptz NOT NULL DEFAULT now()
+├── completed_at         timestamptz NULL  CHECK (status = 'reserved') = (completed_at IS NULL)
+└── UNIQUE (organization_id, idempotency_key)          ← the idempotency guarantee
+```
+
+| Constraint | Why |
+|---|---|
+| `uq_action_executions_organization_id_idempotency_key` | One row per key per tenant: two concurrent requests cannot both proceed, and the arbiter is the database rather than a lock or a lease |
+| `ck_action_executions_status_valid` | The three states this build writes, and no others |
+| `ck_action_executions_completion_consistent`, `…_outcome_consistent`, `…_error_consistent` | Each pairs one status with the columns that accompany it, so a row cannot claim to have run something and be missing the record of what it reported |
+| `ck_action_executions_idempotency_key_shape`, `…_fingerprint_length` | The key and the fingerprint are checked against the same shapes the application enforces, so a value the application would refuse cannot arrive through a data fix either |
+| `target_id` **has no foreign key** | The ledger must survive the target's deletion: a retry after the row is gone has to return the recorded answer, not run the action again |
+| `organization_id` → `organizations` (**RESTRICT**) | As everywhere: removing a tenant is an operational procedure, never a side effect of a `DELETE` |
+
+`action_executions` inherits `TenantOwnedMixin`, so the tenancy guard covers it: an
+unscoped statement is refused before it reaches PostgreSQL.
+
+**This table is not an audit trail**, and the schema is the proof: there is no
+actor, no rationale, no role, no decision history and no row for a refusal. An action
+that was denied, or that required an approval, leaves nothing here, because nothing
+happened. What happened, for whom, whether it was allowed and what it changed is the
+audit system a later phase owns — see [actions.md](actions.md).
+
 ## Migrations
 
 Alembic, as a **dev dependency** (`apps/api/pyproject.toml`). The API runtime
@@ -307,6 +359,7 @@ database/migrations/versions/
   0003_assets.py                # Phase 3: the inventory table + the four asset permissions
   0004_agents.py                # Phase 4: the agent registry + the four agent permissions
   0005_policies.py              # Phase 6: the policy record + the four policy permissions
+  0006_action_firewall.py       # Phase 7: the idempotency ledger + action.execute and its target
 ```
 
 ```bash
@@ -357,6 +410,10 @@ bash scripts/test-db.sh     # real PostgreSQL: migrate from scratch, drift check
 | `test_authentication.py` | tokens are random, hashed, bounded and read only from the header; revoked, expired and suspended credentials stop working |
 | `test_identity_api.py` | `GET /me`: identity, every membership with its role and permissions, uniform 401s, no credential echoed |
 | `test_authorization.py` | the permission matrix over HTTP, cross-tenant refusal, IDOR attempts, the declared-permission structural check, and that no handler branches on a role name |
+| `test_actions.py` | the action catalogue and the request model: identifiers, closed sensitivity vocabulary, adapter bindings, argument schemas, and that nothing echoes the arguments it carries |
+| `test_action_firewall.py` | the decision matrix over both upstream layers, every refusal, the fail-closed configuration errors, purity, and a structural scan proving the enforcement path cannot reach a process, a file, a socket or an import |
+| `test_action_execution.py` | only `ALLOW` reaches an adapter (counted with a recording adapter), exactly-once behaviour, idempotency replay and conflict, and the ledger's constraints against real PostgreSQL |
+| `test_actions_api.py` | the execute endpoint over HTTP: CASE A–G with call counts, every published error, tenant isolation and IDOR, injection-shaped input, the closed request body, secret hygiene, and that exactly one route can reach an adapter |
 | `test_cli.py` | the provisioning CLI produces a token that authenticates over HTTP |
 
 `tests/tenant_fixture.py` declares a **test-only** tenant-owned table: no domain

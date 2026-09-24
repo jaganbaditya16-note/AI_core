@@ -34,6 +34,8 @@ from aicore_api.core.policy import (
     PolicyDefinitionError,
     PolicyEffect,
     PolicyStatus,
+    UnknownPolicyTargetError,
+    validate_target,
 )
 from aicore_api.db.models.policy import Policy, PolicyVersion
 from aicore_api.db.repositories.policies import PolicyRepository
@@ -202,7 +204,10 @@ def test_the_database_refuses_an_unknown_policy_status(
         ("effect", "permit"),
         ("effect", "DENY"),
         ("resource", "firewall"),
-        ("action", "execute"),
+        # ``execute`` became a declared action in Phase 7, so the case below names one
+        # that is not: the invariant is "the action vocabulary is closed", and the member
+        # of it that now exists has its own test further down.
+        ("action", "approve"),
         ("action", "block"),
         ("priority", PRIORITY_MAX + 1),
         ("priority", PRIORITY_MIN - 1),
@@ -236,6 +241,42 @@ def test_the_database_refuses_a_version_outside_the_declared_vocabulary(
             value=value,
             policy_id=str(policy.id),
         )
+
+
+def test_the_database_carries_the_target_phase_seven_declared(
+    integration_session: Session,
+    identity_factory: IdentityFactory,
+    integration_engine: Engine,
+) -> None:
+    """``action.execute`` is a declared pair now, and the ``CHECK``s moved with it.
+
+    Phase 7 declared the ``action`` resource and the ``execute`` action, so an
+    organization may write a policy against them — which is why revision ``0006``
+    replaces both target constraints rather than adding the pair somewhere else.
+
+    The constraint compares the two halves against their vocabularies rather than
+    comparing the *pair*, so ``action.read`` passes it while the application refuses it.
+    Both halves of that sentence are asserted here: the database is the backstop for the
+    values, the catalogue is where a pair is decided, and neither is pretending to be the
+    other.
+    """
+    identity = identity_factory(role_code="owner")
+    policy = _create(_repository(integration_session, identity))
+
+    for action in ("execute", "read"):
+        _raw(
+            integration_engine,
+            identity.organization_id,
+            "UPDATE aicore.policy_versions SET resource = :resource, action = :action "
+            "WHERE policy_id = :policy_id AND organization_id = :organization_id",
+            resource="action",
+            action=action,
+            policy_id=str(policy.id),
+        )
+
+    assert validate_target("action", "execute") == (Resource.ACTION, Action.EXECUTE)
+    with pytest.raises(UnknownPolicyTargetError):
+        validate_target("action", "read")
 
 
 def test_the_database_refuses_conditions_that_are_not_an_array(

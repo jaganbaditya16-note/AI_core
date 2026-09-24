@@ -65,6 +65,18 @@ POLICY_VERSION_PUBLISHED = "policy.version_published"
 POLICY_STATUS_CHANGED = "policy.status_changed"
 POLICY_DELETED = "policy.deleted"
 
+#: Phase 7's action event: one registered action ran, because this build admitted it.
+#: That is a change the system caused on someone's behalf, which is what a later audit
+#: view is for — and the data carries the decision, the adapter and the outcome's
+#: digest, never the arguments a caller sent.
+#:
+#: There is deliberately **no** event for a refusal, and none for a firewall decision.
+#: A refusal changes nothing: no row, no state, nobody's data. The response records why
+#: it was refused, and turning every refused attempt into an event would make this
+#: stream a request log — a different thing, with different retention questions, owned
+#: by the phase that owns the audit trail.
+ACTION_EXECUTED = "action.executed"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:

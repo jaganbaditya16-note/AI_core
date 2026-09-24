@@ -189,7 +189,14 @@ try:
     print(f"[test-db]   upgrade:   {applied}")
     print(f"[test-db]   downgrade: {reversed_tables}")
     print(f"[test-db]   upgrade:   {reapplied}")
-    for table in ("organizations", "assets", "agents", "policies", "policy_versions"):
+    for table in (
+        "organizations",
+        "assets",
+        "agents",
+        "policies",
+        "policy_versions",
+        "action_executions",
+    ):
         if table not in applied:
             sys.exit(f"[test-db] FAILED: the migration did not create {table}")
         if table in reversed_tables:

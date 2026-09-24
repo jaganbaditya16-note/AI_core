@@ -130,7 +130,10 @@ def test_the_same_name_cannot_be_used_twice_in_one_organization(
         ("resource", "firewall"),
         ("resource", "incident"),
         ("action", "block"),
-        ("action", "execute"),
+        # Paired with the default resource this is ``agent.approve``: still a pair no
+        # phase declares. ``action.execute`` itself is declared — Phase 7's target — and
+        # is exercised in ``test_action_*``.
+        ("action", "approve"),
         ("side_effects", True),
     ],
 )

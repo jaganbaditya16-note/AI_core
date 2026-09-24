@@ -14,7 +14,11 @@ added the agent registry: ``agents``, the stable identity of one of those assets
 Phase 6 adds the policy record: ``policies`` (the identity, rationale and lifecycle
 of one policy) and ``policy_versions`` (its append-only definitions, one row per
 version — a published version is never rewritten, so a recorded decision can name
-the exact definition it was made from).
+the exact definition it was made from). Phase 7 adds ``action_executions``: the
+idempotency ledger for admitted actions — one row per caller-supplied key, holding
+the recorded outcome so a retry returns it instead of executing the action twice. It
+is not the audit trail; that is Phase 8's, and this table deliberately records no
+actor and no refusal.
 
 Keep the per-type distinction in ``core/assets.py``, not here: assets of different
 types share one table on purpose (see ``db/models/asset.py``).
@@ -22,6 +26,7 @@ types share one table on purpose (see ``db/models/asset.py``).
 
 from __future__ import annotations
 
+from aicore_api.db.models.action_execution import ActionExecution
 from aicore_api.db.models.agent import Agent
 from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
@@ -39,6 +44,7 @@ from aicore_api.db.models.user import User, UserStatus, normalize_email
 __all__ = [
     "NAME_MAX_LENGTH",
     "SLUG_MAX_LENGTH",
+    "ActionExecution",
     "Agent",
     "ApiToken",
     "Asset",

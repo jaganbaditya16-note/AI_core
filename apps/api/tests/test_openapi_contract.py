@@ -64,6 +64,47 @@ EXPECTED_ASSET_SCHEMAS = {
     "AssetOwnerListResponse": {"organization_id", "owners"},
 }
 
+#: Phase 7's published shapes, and the fields each one carries. The request is the
+#: whole client-side surface of the firewall, and it is the *negative* half that
+#: matters: no executor, module, function, URL, command, permission, role or
+#: organization field exists, because the server takes those from code, the credential
+#: and the path.
+EXPECTED_ACTION_SCHEMAS = {
+    "ActionExecuteRequest": {
+        "action",
+        "target_id",
+        "environment",
+        "arguments",
+        "idempotency_key",
+        "agent_id",
+    },
+    "ActionTargetRead": {"resource", "id"},
+    "FirewallDecisionRead": {"outcome", "reason"},
+    "ActionOutcomeRead": {"summary", "findings", "details", "adapter", "digest"},
+    "ActionExecutionResponse": {
+        "organization_id",
+        "action_id",
+        "action_sensitivity",
+        "target",
+        "agent_id",
+        "permission_required",
+        "principal_role",
+        "environment",
+        "firewall",
+        "authorization",
+        "policy",
+        "effective",
+        "executed",
+        "replayed",
+        "execution_id",
+        "idempotency_key",
+        "correlation_id",
+        "executed_at",
+        "result",
+    },
+}
+
+
 EXPECTED_ASSET_REQUEST_FIELDS = {
     "AssetCreate": {
         "name",
@@ -260,8 +301,10 @@ def test_the_permission_vocabulary_is_published(client: TestClient) -> None:
     """A client reads `resource` and `action` as closed vocabularies, not as strings.
 
     Phase 5 published the two halves of a permission identifier; this asserts the
-    document a client actually receives, including the negative half — no action
-    this build cannot perform may appear in the vocabulary.
+    document a client actually receives. Phase 7 added one pair to it — ``action`` and
+    ``execute``, which together name the single capability that runs a registered
+    action — and this is where the *negative* half is asserted too: no other resource
+    may be executed, and no control-plane verb this build cannot perform may appear.
     """
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
 
@@ -274,13 +317,28 @@ def test_the_permission_vocabulary_is_published(client: TestClient) -> None:
         "asset",
         "agent",
         "policy",
+        "action",
     }
-    assert set(schemas["Action"]["enum"]) == {"read", "create", "update", "delete", "manage"}
+    assert set(schemas["Action"]["enum"]) == {
+        "read",
+        "create",
+        "update",
+        "delete",
+        "manage",
+        "execute",
+    }
 
-    # The document must not advertise a capability the build does not have.
-    forbidden = {"execute", "approve", "kill", "block", "intercept", "control", "firewall"}
+    # The document must not advertise a capability the build does not have. ``execute``
+    # is deliberately absent from this list: it exists (Phase 7), on one resource, and
+    # the test below pins that down rather than forbidding the word.
+    forbidden = {"approve", "kill", "block", "intercept", "control", "firewall", "enforce"}
     assert not forbidden & set(schemas["Action"]["enum"])
     assert not forbidden & set(schemas["Resource"]["enum"])
+
+    # ``execute`` is published on ``action`` and on nothing else: a client reading the
+    # vocabulary cannot conclude that agents or policies may be executed.
+    assert set(schemas["Resource"]["enum"]) & {"action"} == {"action"}
+    assert "agent.execute" not in str(schemas["PermissionRead"])
 
     properties = schemas["PermissionRead"]["properties"]
     assert properties["resource"] == {"$ref": "#/components/schemas/Resource"}
@@ -348,6 +406,88 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         assert "404" in responses, route
 
 
+def test_the_action_firewall_contract_is_published(client: TestClient) -> None:
+    """A client can read the request's shape, and it cannot state what the server owns.
+
+    The negative half is the assertion that matters here. The execution body names an
+    action, a target, an environment, arguments, an idempotency key and optionally an
+    agent — never an executor, a module, a function, a URL, a command, a permission, a
+    role or an organization. Those come from code, the credential and the path, and a
+    body that tries to add one is refused rather than ignored.
+    """
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    for name, fields in EXPECTED_ACTION_SCHEMAS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    published = set(schemas["ActionExecuteRequest"]["properties"])
+    assert not published & {
+        "organization_id",
+        "principal_id",
+        "membership_id",
+        "user_id",
+        "role",
+        "roles",
+        "permission",
+        "permissions",
+        "correlation_id",
+        "request_id",
+        "executor",
+        "executor_id",
+        "adapter",
+        "module",
+        "function",
+        "command",
+        "script",
+        "shell",
+        "url",
+        "endpoint",
+        "approved",
+        "approval",
+    }, "the execution request publishes a field the server owns"
+
+    # The vocabularies a client needs are enumerated, not left as bare strings.
+    assert set(schemas["ActionSensitivity"]["enum"]) == {"routine", "controlled", "sensitive"}
+    assert set(schemas["FirewallOutcome"]["enum"]) == {"allow", "deny", "require_approval"}
+    assert set(schemas["FirewallReason"]["enum"]) == {
+        "allowed",
+        "authorization_denied",
+        "policy_denied",
+        "policy_requires_approval",
+        "target_not_found",
+        "environment_mismatch",
+    }
+
+
+def test_the_execution_route_documents_every_refusal(client: TestClient) -> None:
+    """The one route that can execute something says how it fails, in the document.
+
+    A client that reads only the OpenAPI document must be able to tell that a refusal
+    is a refusal: the route publishes 401, 403, 404, 409, 422 and 500, and the 403
+    description names the reasons a decision can come out as anything other than
+    ``allow``.
+    """
+    paths = client.get("/openapi.json").json()["paths"]
+    operation = paths["/organizations/{organization_id}/actions/execute"]["post"]
+
+    for status_code in ("401", "403", "404", "409", "422", "500"):
+        assert status_code in operation["responses"], status_code
+
+    forbidden = operation["responses"]["403"]["description"]
+    assert "policy" in forbidden.lower()
+    assert "approval" in forbidden.lower()
+
+    # There is exactly one execution operation in the application, and it is this one.
+    executing = [
+        f"{method.upper()} {path}"
+        for path, methods in paths.items()
+        for method in methods
+        if "execute" in path and method in {"get", "post", "patch", "put", "delete"}
+    ]
+    assert executing == ["POST /organizations/{organization_id}/actions/execute"]
+
+
 def test_readiness_documents_the_503_response(client: TestClient) -> None:
     ready = client.get("/openapi.json").json()["paths"]["/health/ready"]["get"]["responses"]
 
@@ -367,6 +507,7 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         | {field for fields in EXPECTED_IDENTITY_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_ASSET_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_AGENT_SCHEMAS.values() for field in fields}
+        | {field for fields in EXPECTED_ACTION_SCHEMAS.values() for field in fields}
     )
     for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
@@ -394,6 +535,11 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "PolicyEvaluateRequest",
         "PolicyEvaluateResponse",
         "EffectivePolicyDecision",
+        "ActionExecuteRequest",
+        "ActionExecutionResponse",
+        "ActionOutcome",
+        "ActionTarget",
+        "FirewallDecision",
     ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
 
@@ -411,6 +557,9 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "PolicyStatus",
         "PolicyConditionField",
         "PolicyConditionOperator",
+        "ActionSensitivity",
+        "FirewallOutcome",
+        "FirewallReason",
     ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
     for value in (
@@ -428,14 +577,29 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "not_applicable",
         "agent_age_days",
         "is_resource_owner",
+        "execute",
+        "action",
+        "routine",
+        "allowed",
+        "authorization_denied",
+        "policy_denied",
+        "policy_requires_approval",
+        "target_not_found",
+        "environment_mismatch",
+        "approval_required",
+        "idempotency_conflict",
+        "execution_failed",
     ):
         assert f'"{value}"' in source, f"packages/types is missing the literal {value!r}"
 
     # Guard against a domain model creeping into phases that are not implemented.
     # Agent and Policy are no longer on this list — Phase 4 and Phase 6 implemented
-    # them. Everything the later phases own still has to stay out of the shared
-    # contract until it exists, and the policy types stop where the phase does: there
-    # is no approval workflow, no firewall and no runtime session in the mirror.
+    # them — and neither is the action firewall, whose decision and execution shapes
+    # are mirrored above. What stays out is everything the later phases own, including
+    # the two things named after the firewall that this build deliberately does not
+    # have: an ``ActionFirewall`` as a manageable object (rules, status, toggles — the
+    # control center's) and any approval workflow. Phase 7 publishes a decision and a
+    # result, not a thing to administer.
     for not_yet in (
         "Incident",
         "ActionFirewall",

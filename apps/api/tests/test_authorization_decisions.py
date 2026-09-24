@@ -587,6 +587,7 @@ PATH_RESOURCES = (
     ("/assets", Resource.ASSET),
     ("/agents", Resource.AGENT),
     ("/policies", Resource.POLICY),
+    ("/actions", Resource.ACTION),
     ("/members", Resource.USER),
     ("/roles", Resource.ROLE),
     ("/permissions", Resource.ROLE),
@@ -604,9 +605,13 @@ METHOD_ACTIONS = {
 #: permission it must declare instead. ``POST`` normally means "create", and a route
 #: here is the exception a reviewer should see rather than an accident the rule would
 #: have caught: the dry run carries a request body, so it is a POST, and it reads
-#: policies — it is the one POST in the application that cannot change anything.
+#: policies — it is the one POST in the application that cannot change anything. The
+#: execution endpoint is a POST that *runs* a registered action, and the action it
+#: names is ``execute`` rather than ``create``: nothing is created, and one permission
+#: guards the whole catalogue.
 METHOD_ACTION_EXCEPTIONS: dict[tuple[str, str], Permission] = {
     ("POST", "/organizations/{organization_id}/policies/evaluate"): Permission.POLICY_READ,
+    ("POST", "/organizations/{organization_id}/actions/execute"): Permission.ACTION_EXECUTE,
 }
 
 

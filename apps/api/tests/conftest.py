@@ -36,6 +36,7 @@ from sqlalchemy import Engine, create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from actions_fixture import ActionFactory  # noqa: E402
 from agents_fixture import AgentFactory  # noqa: E402
 from aicore_api.config import Settings, get_settings  # noqa: E402
 from aicore_api.db import tenancy  # noqa: E402
@@ -273,6 +274,30 @@ def policies(
         # Before the identity purge, which happens after this fixture: a policy
         # references its organization with RESTRICT, so the organization cannot be
         # deleted while one is still there.
+        factory.purge()
+
+
+@pytest.fixture
+def actions(
+    authenticate, owner_identity: Identity, integration_engine: Engine
+) -> Iterator[ActionFactory]:
+    """An owner of a fresh tenant, authenticated, and a factory for executions.
+
+    Phase 7's mirror of the ``assets``/``agents``/``policies`` fixtures: a tenant that
+    belongs to nobody else, a credential that may execute in it, and a way to send
+    execution requests and read what they left in the idempotency ledger.
+    """
+    factory = ActionFactory(
+        client=authenticate(owner_identity),
+        organization_id=owner_identity.organization_id,
+        engine=integration_engine,
+        token=owner_identity.token,
+    )
+    try:
+        yield factory
+    finally:
+        # Before the identity purge, which happens after this fixture: a ledger row
+        # references its organization with RESTRICT.
         factory.purge()
 
 

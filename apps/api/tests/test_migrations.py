@@ -25,7 +25,7 @@ from aicore_api.db.models.organization import Organization
 from aicore_api.db.repositories.rbac import RoleCatalog
 
 CONFIG = Config("alembic.ini")
-EXPECTED_REVISION = "0005_policies"
+EXPECTED_REVISION = "0006_action_firewall"
 #: Oldest first: each revision's ``down_revision`` must be the one before it.
 EXPECTED_CHAIN = [
     "0001_organizations",
@@ -33,6 +33,7 @@ EXPECTED_CHAIN = [
     "0003_assets",
     "0004_agents",
     "0005_policies",
+    "0006_action_firewall",
 ]
 
 
@@ -139,8 +140,9 @@ def test_the_tenant_boundary_is_enforced_in_the_database(
 def test_the_application_schema_is_exactly_what_the_models_declare(
     integration_engine: Engine,
 ) -> None:
-    """Nine tables: the tenant registry, Phase 2's identity and RBAC tables, Phase 3's
-    asset inventory and Phase 4's agent registry.
+    """Twelve tables: the tenant registry, Phase 2's identity and RBAC tables, Phase 3's
+    asset inventory, Phase 4's agent registry, Phase 6's policy record and Phase 7's
+    action-execution ledger.
 
     The models, the migrations and the live database must agree on that set — this
     is the assertion that keeps a table from arriving unnoticed, and the reason
@@ -169,6 +171,7 @@ def test_the_application_schema_is_exactly_what_the_models_declare(
         "agents",
         "policies",
         "policy_versions",
+        "action_executions",
     }
     assert live == expected
     assert {table.name for table in Base.metadata.tables.values()} == expected

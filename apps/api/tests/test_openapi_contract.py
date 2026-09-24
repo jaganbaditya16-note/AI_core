@@ -273,6 +273,7 @@ def test_the_permission_vocabulary_is_published(client: TestClient) -> None:
         "security",
         "asset",
         "agent",
+        "policy",
     }
     assert set(schemas["Action"]["enum"]) == {"read", "create", "update", "delete", "manage"}
 
@@ -384,6 +385,15 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "Agent",
         "AgentListResponse",
         "AgentIdentityMetadata",
+        "Policy",
+        "PolicyCondition",
+        "PolicyListResponse",
+        "PolicyVersion",
+        "PolicyVersionListResponse",
+        "PolicyDecision",
+        "PolicyEvaluateRequest",
+        "PolicyEvaluateResponse",
+        "EffectivePolicyDecision",
     ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
 
@@ -397,6 +407,10 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "AgentCategory",
         "PermissionResource",
         "PermissionAction",
+        "PolicyEffect",
+        "PolicyStatus",
+        "PolicyConditionField",
+        "PolicyConditionOperator",
     ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
     for value in (
@@ -409,18 +423,26 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "autonomous",
         "manage",
         "security",
+        "policy",
+        "require_approval",
+        "not_applicable",
+        "agent_age_days",
+        "is_resource_owner",
     ):
         assert f'"{value}"' in source, f"packages/types is missing the literal {value!r}"
 
     # Guard against a domain model creeping into phases that are not implemented.
-    # Agent is no longer on this list — Phase 4 implemented it. Everything the later
-    # phases own still has to stay out of the shared contract until it exists.
+    # Agent and Policy are no longer on this list — Phase 4 and Phase 6 implemented
+    # them. Everything the later phases own still has to stay out of the shared
+    # contract until it exists, and the policy types stop where the phase does: there
+    # is no approval workflow, no firewall and no runtime session in the mirror.
     for not_yet in (
-        "Policy",
-        "PolicyDecision",
         "Incident",
         "ActionFirewall",
         "RuntimeSession",
         "Approval",
+        "ApprovalRequest",
+        "PolicyEnforcement",
+        "KillSwitch",
     ):
         assert f"interface {not_yet}" not in source, f"packages/types declares {not_yet}"

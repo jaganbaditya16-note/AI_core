@@ -602,6 +602,9 @@ def test_no_role_holds_permissions_this_build_did_not_introduce() -> None:
     feature is exactly how a least-privilege table erodes. Phase 3 added the four
     inventory permissions; Phase 4 added the four registry permissions, and the
     agent namespace holds *only* those — registering an agent is not executing one.
+    Phase 6 added the four policy permissions, and that namespace holds only those
+    too: evaluating a policy is not executing an action, and acting on a decision is
+    the action firewall's job in a later phase.
     """
     assert {permission for permission in Permission if permission.value.startswith("asset.")} == {
         Permission.ASSET_READ,
@@ -615,13 +618,33 @@ def test_no_role_holds_permissions_this_build_did_not_introduce() -> None:
         Permission.AGENT_UPDATE,
         Permission.AGENT_DELETE,
     }
+    assert {permission for permission in Permission if permission.value.startswith("policy.")} == {
+        Permission.POLICY_READ,
+        Permission.POLICY_CREATE,
+        Permission.POLICY_UPDATE,
+        Permission.POLICY_DELETE,
+    }
     assert set(ROLE_PERMISSIONS) == set(RoleCode)
 
     # The permission vocabulary contains nothing about executing, suspending,
-    # containing or approving an agent, or about policies, firewalls, incidents and
-    # runtime actions: those are later phases, and a permission for them now would
-    # be a claim the application cannot honour.
-    forbidden_prefixes = ("policy.", "firewall.", "incident.", "action.")
+    # containing or approving an agent, or about firewalls, incidents and runtime
+    # actions: those are later phases, and a permission for them now would be a claim
+    # the application cannot honour. The policy namespace is the sharpest case — it
+    # exists so a policy can be written, and deliberately stops there: no permission
+    # here may execute, approve, enforce or evaluate anything.
+    forbidden_prefixes = ("firewall.", "incident.", "action.")
+    forbidden_policy_codes = (
+        "policy.execute",
+        "policy.approve",
+        "policy.enforce",
+        "policy.evaluate",
+        "policy.kill",
+        "policy.intercept",
+        "policy.suspend",
+    )
+    assert not [
+        permission for permission in Permission if permission.value in forbidden_policy_codes
+    ]
     forbidden_agent_actions = (
         "agent.execute",
         "agent.suspend",

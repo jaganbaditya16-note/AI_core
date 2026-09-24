@@ -167,7 +167,7 @@ export interface RoleListResponse {
  * deliberately small: a resource appears here only once a permission guards it.
  */
 export type PermissionResource =
-  "organization" | "user" | "role" | "audit" | "security" | "asset" | "agent";
+  "organization" | "user" | "role" | "audit" | "security" | "asset" | "agent" | "policy";
 
 /**
  * The action half of a permission identifier: what may be done.
@@ -337,6 +337,222 @@ export interface AgentListResponse {
   offset: number;
   /** Number of matching agents, or `null` unless the request asked with `?total=true`. */
   total: number | null;
+}
+
+/* ── Policies (Phase 6) ──────────────────────────────────────────────────── */
+
+/**
+ * What a policy says when it applies.
+ *
+ * `require_approval` is a *value*: this build reports it and performs no approval.
+ */
+export type PolicyEffect = "allow" | "deny" | "require_approval";
+
+/**
+ * Where a policy is in its life. Only `active` participates in evaluation.
+ *
+ * A policy is created as a `draft` or `active`; `disabled` and `retired` are states
+ * it moves to. `retired` is terminal.
+ */
+export type PolicyStatus = "draft" | "active" | "disabled" | "retired";
+
+/**
+ * The facts a condition may be written about.
+ *
+ * A closed vocabulary, mirrored in `aicore_api.core.policy.ConditionField`. There is
+ * no free-form field and no expression language: a condition is a field, an operator
+ * and a typed value, all validated before the policy is stored.
+ */
+export type PolicyConditionField =
+  | "environment"
+  | "asset_type"
+  | "resource_status"
+  | "risk_classification"
+  | "agent_category"
+  | "user_role"
+  | "is_resource_owner"
+  | "agent_age_days"
+  | "asset_age_days";
+
+/**
+ * The operators, and all of them.
+ *
+ * The set-valued operators compare against a list, the ordered ones against a
+ * number, and both are refused on a field where they would not mean anything.
+ */
+export type PolicyConditionOperator =
+  | "equals"
+  | "not_equals"
+  | "in"
+  | "not_in"
+  | "less_than"
+  | "less_than_or_equal"
+  | "greater_than"
+  | "greater_than_or_equal";
+
+/**
+ * One condition: a field, an operator, and the value it is compared against.
+ *
+ * The value is a string, a boolean, a number, or a list of those for the set
+ * operators — never an expression. Every condition must hold for a policy to apply.
+ */
+export interface PolicyCondition {
+  field: PolicyConditionField;
+  operator: PolicyConditionOperator;
+  value: string | number | boolean | Array<string | number | boolean>;
+}
+
+/** One condition that held, with the fact that satisfied it. */
+export interface MatchedCondition {
+  field: PolicyConditionField;
+  operator: PolicyConditionOperator;
+  value: string | number | boolean | Array<string | number | boolean>;
+  actual: string | number | boolean;
+}
+
+/** A policy as the API returns it: the record plus its current definition. */
+export interface Policy {
+  policy_id: string;
+  organization_id: string;
+  name: string;
+  description: string;
+  resource: PermissionResource;
+  action: PermissionAction;
+  effect: PolicyEffect;
+  priority: number;
+  status: PolicyStatus;
+  /** The current definition's version. A decision names the version it used. */
+  version: number;
+  conditions: PolicyCondition[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** `GET /organizations/{organization_id}/policies`. */
+export interface PolicyListResponse {
+  organization_id: string;
+  items: Policy[];
+  count: number;
+  limit: number;
+  offset: number;
+  /** Number of matching policies, or `null` unless the request asked with `?total=true`. */
+  total: number | null;
+}
+
+/** One version of a policy's definition. Append-only: a version is never edited. */
+export interface PolicyVersion {
+  version: number;
+  resource: PermissionResource;
+  action: PermissionAction;
+  effect: PolicyEffect;
+  priority: number;
+  conditions: PolicyCondition[];
+  created_at: string;
+}
+
+/** `GET /organizations/{organization_id}/policies/{policy_id}/versions`. */
+export interface PolicyVersionListResponse {
+  organization_id: string;
+  policy_id: string;
+  /** Which version is in force now — not necessarily the last item on the page. */
+  current_version: number;
+  items: PolicyVersion[];
+  limit: number;
+  offset: number;
+  count: number;
+  total: number;
+}
+
+/**
+ * What the policy layer says about one request, on its own.
+ *
+ * `not_applicable` means no active policy addressed it — a decision, not an absence
+ * of one. `allow` here means "no policy objects", never "the caller may act": the
+ * effective answer combines this with the authorization decision, and a policy can
+ * only make it more restrictive.
+ */
+export interface PolicyDecision {
+  decision: PolicyEffect | "not_applicable";
+  reason: "no_matching_policy" | "matching_allow" | "matching_deny" | "matching_require_approval";
+  allowed: boolean;
+  denied: boolean;
+  requires_approval: boolean;
+  applicable: boolean;
+  policy_id: string | null;
+  policy_version: number | null;
+  policy_name: string | null;
+  priority: number | null;
+  matched_conditions: MatchedCondition[];
+  matched_policy_count: number;
+  evaluated_policies: number;
+}
+
+/** Phase 5's answer for the permission the target names. */
+export interface PolicyAuthorizationDecision {
+  allowed: boolean;
+  reason: string;
+  permission: string;
+}
+
+/** The two layers combined: a policy can restrict an authorization, never widen it. */
+export interface EffectivePolicyDecision {
+  decision: PolicyEffect;
+  reason:
+    | "authorization_denied"
+    | "policy_denied"
+    | "policy_requires_approval"
+    | "policy_allowed"
+    | "authorization_grant";
+  allowed: boolean;
+  denied: boolean;
+  requires_approval: boolean;
+}
+
+/**
+ * `POST /organizations/{organization_id}/policies/evaluate`.
+ *
+ * A **dry run**: it evaluates and reports, and performs no action, no approval and no
+ * enforcement. `dry_run` is always `true` and is part of the contract on purpose —
+ * the response says what *would* happen and nothing else. Enforcement belongs to the
+ * action firewall, which this build does not have.
+ *
+ * `user_role` and `is_resource_owner` are never accepted in `facts`: they come from
+ * the caller's membership, and the endpoint refuses a request that supplies them.
+ */
+export interface PolicyEvaluateRequest {
+  resource: PermissionResource;
+  action: PermissionAction;
+  facts?: Partial<Record<PolicyConditionField, string | number | boolean>>;
+}
+
+export interface PolicyEvaluateResponse {
+  dry_run: true;
+  organization_id: string;
+  resource: PermissionResource;
+  action: PermissionAction;
+  permission_required: string;
+  principal_role: string;
+  authorization: PolicyAuthorizationDecision;
+  policy: PolicyDecision;
+  effective: EffectivePolicyDecision;
+  evaluated_at: string;
+}
+
+/**
+ * The body for creating a policy.
+ *
+ * `effect` is required rather than defaulted: the effect *is* the decision, and a
+ * client that omitted it would be choosing a semantics by accident.
+ */
+export interface PolicyCreate {
+  name: string;
+  description: string;
+  resource: PermissionResource;
+  action: PermissionAction;
+  effect: PolicyEffect;
+  priority?: number;
+  conditions?: PolicyCondition[];
+  status?: "draft" | "active";
 }
 
 /* ── Errors ──────────────────────────────────────────────────────────────── */

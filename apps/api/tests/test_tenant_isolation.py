@@ -58,6 +58,31 @@ def test_organizations_is_not_tenant_owned() -> None:
     assert "organizations" not in tenant_owned_tables()
 
 
+def test_the_policy_tables_are_tenant_owned() -> None:
+    """Derived from the schema, exactly like the sample table: a policy and its
+    versions carry an ``organization_id``, so the guard covers both — including the
+    history, which is the half a reader is most likely to forget."""
+    owned = tenant_owned_tables()
+
+    assert "policies" in owned
+    assert "policy_versions" in owned
+
+
+def test_the_policy_repository_cannot_be_built_without_a_tenant() -> None:
+    """The same rule as every other tenant-scoped repository, applied to policies."""
+    from aicore_api.db.repositories.policies import PolicyRepository
+
+    with pytest.raises(TenantScopeError):
+        PolicyRepository(_SessionStub())  # type: ignore[arg-type]
+
+
+class _SessionStub:
+    """A session-shaped object that is never used: construction fails before it."""
+
+    def execute(self, *_: object, **__: object) -> None:  # pragma: no cover
+        raise AssertionError("a repository without a tenant must not reach the session")
+
+
 # ── A tenant id is never inferred or coerced ─────────────────────────────────
 
 

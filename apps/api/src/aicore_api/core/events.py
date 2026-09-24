@@ -49,6 +49,22 @@ AGENT_REGISTERED = "agent.registered"
 AGENT_UPDATED = "agent.updated"
 AGENT_DELETED = "agent.deleted"
 
+#: Phase 6's policy events. A version publication and a lifecycle move are separate
+#: events rather than one "policy updated": they answer different questions — *what
+#: does it say now* and *is it in force* — and a later audit view will want to read
+#: either on its own. Editing a policy's definition never reports an in-place change,
+#: because there is no such thing: the previous version is still there.
+#:
+#: There is no event for evaluating a policy. An evaluation changes nothing — no row,
+#: no state, no decision that binds anyone — and emitting an event for a read would
+#: make the event stream a request log, which is a different thing with different
+#: retention questions.
+POLICY_CREATED = "policy.created"
+POLICY_UPDATED = "policy.updated"
+POLICY_VERSION_PUBLISHED = "policy.version_published"
+POLICY_STATUS_CHANGED = "policy.status_changed"
+POLICY_DELETED = "policy.deleted"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:

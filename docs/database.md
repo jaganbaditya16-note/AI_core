@@ -1,16 +1,18 @@
-# Database and multi-tenancy (Phases 1–4)
+# Database and multi-tenancy (Phases 1–6)
 
 Phase 1 added the PostgreSQL foundation and the tenant boundary every later phase
 builds on. Phase 2 adds the identity and access tables that turn that boundary
 into something a user can actually be authorized inside: **users, roles,
 permissions, role-permission grants, memberships and API tokens**. Phase 3 added
-the inventory (**assets**), and Phase 4 the agent registry (**agents**) that gives
-one kind of asset a stable identity.
+the inventory (**assets**), Phase 4 the agent registry (**agents**) that gives one
+kind of asset a stable identity, and Phase 6 the policy record (**policies** and
+**policy_versions**): the identity and life of a policy, and its append-only
+history of definitions.
 
-Models, tools, data sources, policies, events and incidents still do not exist as
-separate tables. What exists is the set of conventions and the isolation mechanism
-they will inherit — plus the callers who will reach them, and the records they
-will reach.
+Models, tools, data sources, events and incidents still do not exist as separate
+tables. What exists is the set of conventions and the isolation mechanism they
+will inherit — plus the callers who will reach them, and the records they will
+reach.
 
 ## The tenant model
 
@@ -155,9 +157,15 @@ while deleting a permission that is still granted, or a role a membership still
 uses, is refused. Tenant correctness needs no column: the catalogue is
 installation-wide reference data, and *which role a member holds* is the
 tenant-owned row in `memberships`. So there is no Phase 5 migration, and the
-schema head remains `0004_agents`; a redundant constraint would have been a claim
-this phase could not justify. The seeded catalogue stays at 16 permissions, 6
-roles and 52 grants.
+schema head stayed `0004_agents` through that phase; a redundant constraint would
+have been a claim it could not justify.
+
+**Phase 6 added four permissions and eleven grants** — `policy.read`,
+`policy.create`, `policy.update`, `policy.delete` — in migration `0005_policies`,
+which is also the first migration to change the seeded catalogue since Phase 4. The
+code catalog and the seeded rows are still compared in both directions by
+`tests/test_migrations.py`, so the two copies cannot drift: 20 permissions, 6 roles
+and 63 grants.
 
 ## The asset inventory table (Phase 3)
 
@@ -298,6 +306,7 @@ database/migrations/versions/
   0002_identity_and_rbac.py     # Phase 2: users, roles, permissions, grants, memberships, tokens
   0003_assets.py                # Phase 3: the inventory table + the four asset permissions
   0004_agents.py                # Phase 4: the agent registry + the four agent permissions
+  0005_policies.py              # Phase 6: the policy record + the four policy permissions
 ```
 
 ```bash

@@ -45,8 +45,10 @@ from aicore_api.db.models.rbac import CODE_PATTERN as MODEL_CODE_PATTERN
 from aicore_api.db.repositories.rbac import RoleCatalog
 
 #: Strings that are *not* permissions this build declares, and why each is refused.
-#: The last four are well-formed ``resource.action`` pairs the roadmap mentions:
-#: they are here so that adding one without the phase that implements it fails.
+#: The trailing well-formed ``resource.action`` pairs are the ones the roadmap (or a
+#: later phase of it) mentions; they are here so that adding one without the phase
+#: that implements it fails — and, for ``policy.execute`` and ``policy.approve``,
+#: so that evaluation can never grow an execution or an approval step.
 REFUSED_CODES = (
     "",
     "agent",
@@ -60,8 +62,11 @@ REFUSED_CODES = (
     " agent.read",
     "agent..read",
     "agent.execute",
-    "policy.read",
+    "policy",
     "policy.execute",
+    "policy.approve",
+    "policy.kill",
+    "policy.evaluate",
     "incident.read",
     "firewall.block",
     "tool.invoke",
@@ -117,8 +122,18 @@ def test_permissions_for_resource_returns_that_resource_and_refuses_an_unknown_o
         permission.resource is Resource.AGENT for permission in permissions_for_resource("agent")
     )
 
+    assert permissions_for_resource(Resource.POLICY) == (
+        Permission.POLICY_READ,
+        Permission.POLICY_CREATE,
+        Permission.POLICY_UPDATE,
+        Permission.POLICY_DELETE,
+    )
+    assert all(
+        permission.resource is Resource.POLICY for permission in permissions_for_resource("policy")
+    )
+
     with pytest.raises(ValueError, match="unknown resource"):
-        permissions_for_resource("policy")
+        permissions_for_resource("firewall")
 
 
 @pytest.mark.parametrize("code", REFUSED_CODES)
@@ -164,9 +179,9 @@ def test_the_vocabulary_declares_no_future_phase_resource() -> None:
         "security",
         "asset",
         "agent",
+        "policy",
     }
     forbidden = {
-        "policy",
         "incident",
         "tool",
         "model",
@@ -220,6 +235,10 @@ EXPECTED_ROLE_MATRIX: dict[RoleCode, set[Permission]] = {
         Permission.AGENT_CREATE,
         Permission.AGENT_UPDATE,
         Permission.AGENT_DELETE,
+        Permission.POLICY_READ,
+        Permission.POLICY_CREATE,
+        Permission.POLICY_UPDATE,
+        Permission.POLICY_DELETE,
     },
     RoleCode.SECURITY_ADMIN: {
         Permission.ORGANIZATION_READ,
@@ -230,6 +249,9 @@ EXPECTED_ROLE_MATRIX: dict[RoleCode, set[Permission]] = {
         Permission.ASSET_UPDATE,
         Permission.AGENT_READ,
         Permission.AGENT_UPDATE,
+        Permission.POLICY_READ,
+        Permission.POLICY_CREATE,
+        Permission.POLICY_UPDATE,
     },
     RoleCode.AI_ADMIN: {
         Permission.ORGANIZATION_READ,
@@ -260,7 +282,13 @@ def test_the_role_matrix_is_exactly_the_documented_one() -> None:
 
     Phase 5 reviewed the matrix against the resources that exist rather than
     re-deriving it from the roadmap, and kept it: every grant below answers a
-    capability the application can actually enforce.
+    capability the application can actually enforce. Phase 6 added the policy
+    namespace to three roles, each for a stated reason — the security administrator
+    writes a policy (recording a containment decision is its job) but cannot delete
+    one, administration manages policies outright, the AI administrator holds none
+    because the party a policy constrains does not write the constraint, and the
+    analyst and the viewer read no policy at all: governance configuration is not
+    inventory and not security findings.
     """
     assert {
         role: set(granted) for role, granted in ROLE_PERMISSIONS.items()
@@ -281,11 +309,25 @@ def test_no_role_holds_a_permission_for_a_resource_that_does_not_exist() -> None
             Permission.ASSET_DELETE,
             Permission.AGENT_CREATE,
             Permission.AGENT_DELETE,
+            Permission.POLICY_CREATE,
         } or role_code in {
             RoleCode.OWNER,
             RoleCode.ADMIN,
             RoleCode.AI_ADMIN,
         }, f"{role_code}: unexpected write grants {writes}"
+
+        # Writing a policy is the one governance record a non-administrative role
+        # may create, and only the security administrator does. Deleting one is not
+        # part of that job: removing the record stays with the owner and the
+        # administrator, exactly as deleting an asset or an agent does.
+        if granted & {Permission.POLICY_CREATE, Permission.POLICY_UPDATE, Permission.POLICY_DELETE}:
+            assert role_code in {RoleCode.OWNER, RoleCode.ADMIN, RoleCode.SECURITY_ADMIN}
+        if Permission.POLICY_DELETE in granted:
+            assert role_code in {RoleCode.OWNER, RoleCode.ADMIN}
+        # Updating a policy without being able to create one would be a strange
+        # grant; the two travel together or not at all.
+        if Permission.POLICY_UPDATE in granted:
+            assert Permission.POLICY_CREATE in granted
 
 
 def test_the_seeded_catalog_holds_exactly_the_declared_permissions(

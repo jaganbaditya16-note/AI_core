@@ -1,13 +1,15 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 5: permission model and
-authorization foundation**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL
-schema and tenant boundary, Phase 2 the identity layer on top of it (bearer tokens
-identify a user, memberships bind them to an organization with a role, protected
-routes authorize against explicit permissions), Phase 3 the AI asset inventory,
-Phase 4 the agent registry (a stable, server-generated identity for one of those
-assets), and Phase 5 the authorization foundation: a closed resource/action
-vocabulary and a deterministic, structured authorization decision.
+**Enterprise AI Control Plane** — currently at **Phase 6: context-aware policy
+engine**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL schema and tenant
+boundary, Phase 2 the identity layer on top of it (bearer tokens identify a user,
+memberships bind them to an organization with a role, protected routes authorize
+against explicit permissions), Phase 3 the AI asset inventory, Phase 4 the agent
+registry (a stable, server-generated identity for one of those assets), Phase 5 the
+authorization foundation (a closed resource/action vocabulary and a deterministic,
+structured authorization decision) and Phase 6 the policy engine: org-scoped policy
+definitions, a closed condition language with typed values, a deterministic
+evaluator, and versioned, append-only policy history.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -17,8 +19,9 @@ reasoning and recommendations.
 **Discovery is not automatic and control is not implemented.** Nothing in this
 repository scans a network or a cloud account: assets are recorded by a person
 through the API, or by a future integration through the internal service boundary
-described in [`docs/inventory.md`](docs/inventory.md). There is no policy engine,
-firewall, containment or monitoring, and
+described in [`docs/inventory.md`](docs/inventory.md). Policies are evaluated and
+reported; nothing is enforced. The policy engine **evaluates** — the action firewall,
+in a later phase, enforces. There is no firewall, containment or monitoring, and
 [`docs/phase-0-scope.md`](docs/phase-0-scope.md) lists exactly what is absent.
 
 ## Architecture direction
@@ -65,7 +68,7 @@ apps/
     src/aicore_api/     main · config · cli · api · auth · core · db · discovery · schemas
     tests/              Pytest suite (unit + PostgreSQL integration)
 packages/
-  types/                shared API contract types (health, errors, organizations, identity, assets, agents, permissions)
+  types/                shared API contract types (health, errors, organizations, identity, assets, agents, permissions, policies)
 database/
   init/                 one-time bootstrap SQL (schema namespace only)
   migrations/           Alembic environment and revisions
@@ -73,8 +76,9 @@ database/
     versions/0002_identity_and_rbac.py
     versions/0003_assets.py
     versions/0004_agents.py
+    versions/0005_policies.py
 tests/e2e/              Playwright smoke tests
-docs/                   architecture, scope, development guide, inventory, agents, authorization, ADRs
+docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, ADRs
 infrastructure/         docker-compose.yml
 scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
@@ -179,8 +183,8 @@ carries `X-Request-ID`.
   `security.read` are part of the catalog and appear on `GET /me`, but there is no
   audit trail or security finding to read yet — no route pretends otherwise.
 - **No domain tables beyond the tenant root, the identity tables, the asset
-  inventory and the agent registry.** The policy, event and incident tables arrive
-  in later phases, through migrations.
+  inventory, the agent registry and the policy record.** The event and incident
+  tables arrive in later phases, through migrations.
 - **No agent runtime.** An agent registry record names an agent; it does not run
   one. There is no execution, no session, no tool invocation, no credential issued
   to an agent, and `status: suspended` is a recorded state rather than a kill
@@ -189,18 +193,55 @@ carries `X-Request-ID`.
   provider is integrated. Assets are registered by a person or by a future
   integration through an internal service boundary — see
   [docs/inventory.md](docs/inventory.md).
-- **No policy engine or runtime enforcement.** Phase 5 made authorization an
-  explicit decision over a closed vocabulary, but the decision reads only the
-  membership, the role, the permission, the tenant and the row's ownership — there
-  is no policy language, no rule store, no action interception, no approval and no
-  kill switch. Nothing an agent does is blocked, because nothing runs here. See
-  [docs/authorization.md](docs/authorization.md).
+- **No runtime enforcement.** Phase 6 evaluates policies and reports what they say;
+  it does not act on the answer. There is no action interception, no blocking, no
+  approval workflow, no suspension-as-a-policy-action and no kill switch — nothing
+  an agent does is stopped, because nothing runs here. A decision that says
+  `require_approval` records that approval is required and does nothing further. See
+  [docs/policies.md](docs/policies.md).
 - **No AI features.** No model provider is integrated; no action firewall, runtime
   containment, behaviour monitoring or incident handling.
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
+
+## What Phase 6 adds
+
+The **context-aware policy engine**: a way for an organization to record what it
+decides about an action in a given situation, and a deterministic evaluator that turns
+those records into a decision — without ever replacing the authorization layer.
+
+- **Policy definitions, org-scoped** — `resource.action` from the permission catalogue,
+  an effect (`allow` / `deny` / `require_approval`), a priority, a status and a list of
+  conditions. One tenant per policy; there is no global or shared policy.
+- **A closed condition language** — nine fields with typed values and closed sets, and
+  eight operators. No expressions, no user code, no `eval()`, no policy-authored SQL,
+  no `OR`, no nesting. A value that does not fit its field is refused before the policy
+  is stored, and an invalid stored definition cannot be activated.
+- **A deterministic evaluator** — `deny` beats `require_approval` beats `allow`,
+  then priority, then name and id, and never the order rows arrived in. The engine is a
+  pure function of its arguments: no clock, no database, no network, no model call,
+  asserted structurally.
+- **A policy can only restrict** — the effective answer is the authorization decision
+  *and* the policy decision, so a Phase 5 denial can never become a permit, and missing
+  context never reads as "allowed".
+- **Versioned history** — editing a definition appends a version and never rewrites
+  one, so a decision that names a version stays explainable. Labels and rationale are
+  not versions; an edit that changes nothing is not a version either.
+- **Four policy permissions** — `policy.read` / `create` / `update` / `delete`, granted
+  to owner, admin and (for read/create/update) security_admin. No `policy.execute`,
+  `policy.approve` or `policy.kill`: evaluation is a read, and no role may make a policy
+  act. The role matrix is now 20 permissions / 63 grants.
+- **A documented dry run** — `POST .../policies/evaluate` reports the authorization
+  decision, the policy decision and the effective answer side by side, and performs no
+  action, records nothing and approves nothing.
+- **Migration `0005_policies`** — new head; two new tables with the tenant boundary in
+  the schema (composite foreign key), closed statuses, effects, targets and bounds as
+  `CHECK` constraints, and JSONB only for the structured condition array.
+
+Design, condition language, precedence and boundaries:
+[docs/policies.md](docs/policies.md).
 
 ## What Phase 5 adds
 
@@ -364,9 +405,11 @@ Design and rationale: [docs/database.md](docs/database.md).
    network, endpoint integrations), agent execution and the dependency graph are
    later work; nothing in this build observes or runs anything.
 3. ~~Authorization foundation~~ — **Phase 5** made permission and decision the
-   vocabulary everything else builds on. Control: policy engine, action firewall,
-   approvals, kill switch — the policy engine (Phase 6) evaluates context and
-   policy *through* this decision path rather than beside it.
+   vocabulary everything else builds on. ~~Policy engine~~ — **Phase 6** evaluates
+   context and policy *through* this decision path rather than beside it, and
+   reports a decision without acting on one. Enforcement: action firewall,
+   approvals, kill switch — still to come, and the only place a policy decision
+   would ever be carried out.
 4. Monitoring: behaviour, anomalies, cost, audit, incidents (making `audit.read`
    and `security.read` mean something).
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic

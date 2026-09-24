@@ -44,6 +44,7 @@ from aicore_api.db.session import dispose_engine  # noqa: E402
 from aicore_api.main import create_app  # noqa: E402
 from assets_fixture import AssetFactory  # noqa: E402
 from identity_fixture import Identity, IdentityFactory  # noqa: E402
+from policies_fixture import PolicyFactory  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
 
 # The fixture table is registered with the isolation guard for the whole session,
@@ -246,6 +247,32 @@ def agents(
         # Before the identity purge, which happens after this fixture: an agent's
         # asset may be owned by a membership that cannot be deleted while it is
         # referenced (the composite foreign key is RESTRICT).
+        factory.purge()
+
+
+@pytest.fixture
+def policies(
+    authenticate, owner_identity: Identity, integration_engine: Engine
+) -> Iterator[PolicyFactory]:
+    """An owner of a fresh tenant, authenticated, and a factory for their policies.
+
+    The governance mirror of the ``assets`` and ``agents`` fixtures: a tenant that
+    belongs to nobody else, a credential that may manage it, and policies created
+    *through the API* so a test using this fixture has already exercised the create
+    path it is about to assert on.
+    """
+    factory = PolicyFactory(
+        client=authenticate(owner_identity),
+        organization_id=owner_identity.organization_id,
+        engine=integration_engine,
+        token=owner_identity.token,
+    )
+    try:
+        yield factory
+    finally:
+        # Before the identity purge, which happens after this fixture: a policy
+        # references its organization with RESTRICT, so the organization cannot be
+        # deleted while one is still there.
         factory.purge()
 
 

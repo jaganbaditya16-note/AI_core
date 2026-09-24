@@ -70,6 +70,18 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     ("GET", "/organizations/{organization_id}/agents/{agent_id}"): {Permission.AGENT_READ},
     ("PATCH", "/organizations/{organization_id}/agents/{agent_id}"): {Permission.AGENT_UPDATE},
     ("DELETE", "/organizations/{organization_id}/agents/{agent_id}"): {Permission.AGENT_DELETE},
+    ("GET", "/organizations/{organization_id}/policies"): {Permission.POLICY_READ},
+    ("POST", "/organizations/{organization_id}/policies"): {Permission.POLICY_CREATE},
+    # The dry run reads policies, so reading them is what it requires. There is no
+    # ``policy.evaluate``: evaluation is not a capability a role is granted, and the
+    # one route that exposes it hands back a report rather than an outcome.
+    ("POST", "/organizations/{organization_id}/policies/evaluate"): {Permission.POLICY_READ},
+    ("GET", "/organizations/{organization_id}/policies/{policy_id}"): {Permission.POLICY_READ},
+    ("GET", "/organizations/{organization_id}/policies/{policy_id}/versions"): {
+        Permission.POLICY_READ
+    },
+    ("PATCH", "/organizations/{organization_id}/policies/{policy_id}"): {Permission.POLICY_UPDATE},
+    ("DELETE", "/organizations/{organization_id}/policies/{policy_id}"): {Permission.POLICY_DELETE},
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
@@ -80,7 +92,9 @@ TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
 ITEM_ROUTES = [
     route
     for route in TENANT_ROUTES
-    if any(f"{{{name}}}" in route[1] for name in ("asset_id", "agent_id", "identity_id"))
+    if any(
+        f"{{{name}}}" in route[1] for name in ("asset_id", "agent_id", "identity_id", "policy_id")
+    )
 ]
 
 #: Routes a fully permitted member can read outright: the collections, not the
@@ -95,7 +109,7 @@ PROTECTED_ROUTES = [*TENANT_ROUTES, ("GET", "/me")]
 def _url(path: str, organization_id: uuid.UUID, item_id: uuid.UUID | None = None) -> str:
     """Render a route template, filling in an item id when the route names one."""
     rendered = path.replace("{organization_id}", str(organization_id))
-    for placeholder in ("asset_id", "agent_id", "identity_id"):
+    for placeholder in ("asset_id", "agent_id", "identity_id", "policy_id"):
         rendered = rendered.replace(f"{{{placeholder}}}", str(item_id or uuid.uuid4()))
     return rendered
 
@@ -112,18 +126,43 @@ def _sweep(
     A validation failure and a refusal can look alike in a sweep like this, and an
     assertion cannot tell which one it saw — so the bodies are valid and the status
     is the only variable. The body follows the collection being addressed: an
-    inventory record and a registered agent are different shapes.
+    inventory record, a registered agent, a policy definition and a dry-run request
+    are four different shapes.
     """
     agent_route = "/agents" in path
-    body: dict[str, str] | None = None
+    policy_route = "/policies" in path
+    evaluate_route = path.endswith("/policies/evaluate")
+    body: dict[str, Any] | None = None
     if method == "POST":
-        body = (
-            {"display_name": "Authorization Sweep", "category": "other", "version": "1.0"}
-            if agent_route
-            else {"name": "Authorization Sweep", "asset_type": "model"}
-        )
+        if evaluate_route:
+            body = {
+                "resource": "agent",
+                "action": "update",
+                "facts": {"environment": "production"},
+            }
+        elif policy_route:
+            body = {
+                "name": "Authorization Sweep",
+                "description": "A well-formed body, so the sweep tests authorization.",
+                "resource": "agent",
+                "action": "update",
+                "effect": "deny",
+                "priority": 100,
+                "conditions": [
+                    {"field": "environment", "operator": "equals", "value": "production"}
+                ],
+            }
+        elif agent_route:
+            body = {"display_name": "Authorization Sweep", "category": "other", "version": "1.0"}
+        else:
+            body = {"name": "Authorization Sweep", "asset_type": "model"}
     elif method == "PATCH":
-        body = {"version": "1.0.1"} if agent_route else {"risk_classification": "low"}
+        if policy_route:
+            body = {"description": "Swept by the authorization suite."}
+        elif agent_route:
+            body = {"version": "1.0.1"}
+        else:
+            body = {"risk_classification": "low"}
     return client.request(method, _url(path, organization_id, item_id), json=body)
 
 
@@ -210,11 +249,18 @@ def test_the_owner_reaches_every_route(
         response = _sweep(client, method, path, identity.organization_id)
         assert response.status_code == 200, f"{method} {path}: {response.text}"
 
-    # Registering is the one write the owner can make outright, in both collections.
+    # Registering is the one write the owner can make outright, in every collection.
     asset = _sweep(client, "POST", f"{ORG}/assets", identity.organization_id)
     assert asset.status_code == 201, asset.text
     agent = _sweep(client, "POST", f"{ORG}/agents", identity.organization_id)
     assert agent.status_code == 201, agent.text
+    policy = _sweep(client, "POST", f"{ORG}/policies", identity.organization_id)
+    assert policy.status_code == 201, policy.text
+    evaluated = client.post(
+        f"{ORG.format(organization_id=identity.organization_id)}/policies/evaluate",
+        json={"resource": "agent", "action": "update", "facts": {"environment": "production"}},
+    )
+    assert evaluated.status_code == 200, evaluated.text
     asset_id = uuid.UUID(asset.json()["id"])
     agent_id = uuid.UUID(agent.json()["id"])
     identity_id = uuid.UUID(agent.json()["identity_id"])
@@ -252,6 +298,28 @@ def test_the_owner_reaches_every_route(
     )
     assert (
         _sweep(client, "DELETE", agent_item, identity.organization_id, agent_id).status_code == 204
+    )
+
+    policy_id = uuid.UUID(policy.json()["policy_id"])
+    policy_item = f"{ORG}/policies/{{policy_id}}"
+    assert (
+        _sweep(client, "GET", policy_item, identity.organization_id, policy_id).status_code == 200
+    )
+    versions = _sweep(
+        client,
+        "GET",
+        f"{ORG}/policies/{{policy_id}}/versions",
+        identity.organization_id,
+        policy_id,
+    )
+    assert versions.status_code == 200, versions.text
+    assert [entry["version"] for entry in versions.json()["items"]] == [policy.json()["version"]]
+    assert (
+        _sweep(client, "PATCH", policy_item, identity.organization_id, policy_id).status_code == 200
+    )
+    assert (
+        _sweep(client, "DELETE", policy_item, identity.organization_id, policy_id).status_code
+        == 204
     )
 
 
@@ -309,6 +377,9 @@ def test_a_security_admin_gets_security_permissions_and_nothing_wider(
         Permission.USER_READ.value,
         Permission.AUDIT_READ.value,
         Permission.SECURITY_READ.value,
+        Permission.POLICY_READ.value,
+        Permission.POLICY_CREATE.value,
+        Permission.POLICY_UPDATE.value,
     }
 
     # Reading the member directory is part of investigating an incident.

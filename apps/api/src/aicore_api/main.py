@@ -28,21 +28,27 @@ AICore is an enterprise AI control plane.
 
 **Implemented today:** health endpoints, the PostgreSQL multi-tenancy foundation,
 the authentication and RBAC foundation on top of it, the AI asset inventory, the
-agent registry, and the authorization foundation. Bearer API tokens identify a
-user, memberships bind them to an organization with a role, routes authorize
-against explicit permissions written as ``resource.action`` over closed
-vocabularies, the inventory records what AI-related things an organization knows
-about, and the registry gives an ``agent`` asset a stable identity that survives
-renames and version changes. Authorization is a deterministic decision — computed
-from the membership, the role, the permission and the row's tenant, never by a
-model — and it is where a later policy phase will attach.
+agent registry, the authorization foundation, and the context-aware policy engine.
+Bearer API tokens identify a user, memberships bind them to an organization with a
+role, routes authorize against explicit permissions written as ``resource.action``
+over closed vocabularies, the inventory records what AI-related things an
+organization knows about, the registry gives an ``agent`` asset a stable identity
+that survives renames and version changes, and an organization can define policies
+— effect, priority and structured conditions over a closed field vocabulary — that
+refine those permissions by context. Both decisions are deterministic and computed
+from data, never by a model: authorization answers *may this caller use this
+permission*, the policy engine answers *given that, does the context satisfy the
+organization's policy*, and the effective answer is the two combined, where a
+policy can only ever make it more restrictive.
 
 Every tenant-scoped route resolves the caller's membership in the organization in
-its path before it runs. The policy engine, the action firewall, agent execution,
+its path before it runs. The action firewall, agent execution, approval workflows,
 audit records, incidents and intelligence features are still not implemented, and
-no endpoint pretends otherwise: nothing here starts, stops, blocks or contains an
-agent, and ``status: suspended`` is a record rather than a runtime control. Tenant
-creation remains a development/test provisioning path, because this build has no
+no endpoint pretends otherwise: nothing here starts, stops, blocks, approves or
+contains an agent, and ``status: suspended`` is a record rather than a runtime
+control. A policy evaluation is a dry run that reports what the policies say; it
+changes nothing, and it is never the thing that stops a request. Tenant creation
+remains a development/test provisioning path, because this build has no
 platform-administrator concept that could authorize it.
 """
 
@@ -95,6 +101,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "Tenant reads, authorized by membership and permission. Tenant "
                     "creation remains development/test only, because it cannot be "
                     "authorized until a platform-administrator concept exists."
+                ),
+            },
+            {
+                "name": "policies",
+                "description": (
+                    "The organization's policy record: definitions, conditions, "
+                    "lifecycle, version history, and a dry-run evaluation endpoint. "
+                    "The policy engine evaluates; it does not enforce. Nothing here "
+                    "executes, blocks, suspends or approves anything."
                 ),
             },
         ],

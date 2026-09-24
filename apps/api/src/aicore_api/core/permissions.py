@@ -35,14 +35,24 @@ Phase 5 documents the mapping instead of churning it.
 
 Scope discipline: the permissions below are exactly those the application can
 enforce today — the Phase 2 foundation (organization, membership, role and
-read-only oversight), the Phase 3 AI asset inventory, and the Phase 4 agent
-registry. Permissions for the policy engine, the action firewall, agent execution,
-approvals and incidents are **not** declared yet: they belong to the phases that
-implement the resources behind them. A permission with nothing to guard would be a
-claim, not a control, and this table would become a document of intentions rather
-than a description of the system. There is deliberately no ``agent.execute``,
-``agent.suspend``, ``agent.approve``, ``agent.control`` or ``agent.policy.*``:
-registering an agent is not the same capability as running one.
+read-only oversight), the Phase 3 AI asset inventory, the Phase 4 agent registry,
+and the Phase 6 policy record. Permissions for the action firewall, agent
+execution, approvals and incidents are **not** declared yet: they belong to the
+phases that implement the resources behind them. A permission with nothing to guard
+would be a claim, not a control, and this table would become a document of
+intentions rather than a description of the system. There is deliberately no
+``agent.execute``, ``agent.suspend``, ``agent.approve``, ``agent.control``,
+``policy.execute``, ``policy.approve`` or ``firewall.block``: registering an agent
+is not the same capability as running one, and writing a policy is not the same
+capability as enforcing it.
+
+Phase 6 adds one resource, and four actions on it. ``policy.read`` /
+``policy.create`` / ``policy.update`` / ``policy.delete`` guard the policy record
+itself. There is deliberately **no** ``policy.evaluate``: evaluating policies is a
+read of them — it stores nothing, changes nothing, and reveals nothing a
+``policy.read`` holder cannot already read — so a separate permission for it would
+be privilege with no boundary behind it. Enforcement, when it arrives, needs a
+permission of its own; that is Phase 7's decision, not this one's.
 """
 
 from __future__ import annotations
@@ -95,10 +105,11 @@ class Resource(StrEnum):
     """The resource half of a permission: what the capability governs.
 
     A closed vocabulary, and deliberately a small one: only resources that exist
-    *and* have a permission guarding them appear here. ``policy``, ``incident``,
-    ``tool`` and the rest of the roadmap are absent because declaring a resource
-    nobody can act on would turn this table into a document of intentions — the
-    same rule the permission list itself follows.
+    *and* have a permission guarding them appear here. ``policy`` arrived with
+    Phase 6, because there is now a policy record to guard; ``incident``, ``tool``,
+    ``firewall`` and the rest of the roadmap are absent because declaring a
+    resource nobody can act on would turn this table into a document of
+    intentions — the same rule the permission list itself follows.
     """
 
     ORGANIZATION = "organization"
@@ -108,6 +119,7 @@ class Resource(StrEnum):
     SECURITY = "security"
     ASSET = "asset"
     AGENT = "agent"
+    POLICY = "policy"
 
 
 class Action(StrEnum):
@@ -180,6 +192,10 @@ class Permission(StrEnum):
     AGENT_CREATE = "agent.create"
     AGENT_UPDATE = "agent.update"
     AGENT_DELETE = "agent.delete"
+    POLICY_READ = "policy.read"
+    POLICY_CREATE = "policy.create"
+    POLICY_UPDATE = "policy.update"
+    POLICY_DELETE = "policy.delete"
 
     @classmethod
     def parse(cls, code: str) -> Permission:
@@ -232,6 +248,7 @@ class RoleCode(StrEnum):
 #: - ADMIN          — general administration, stopping short of ``role.manage``
 #:                    (deciding who may do what is an ownership decision) and of
 #:                    the security/audit reads (oversight is not administration).
+#:                    It administers the policy record in full.
 #: - SECURITY_ADMIN — security posture, the audit trail, and *recording* a
 #:                    containment decision in the inventory (it may read and update
 #:                    assets; it may not create or delete records). Enforcing
@@ -239,13 +256,23 @@ class RoleCode(StrEnum):
 #:                    permission — the inventory state is a record, not an action.
 #:                    The registry follows the same rule: it reads agents and may
 #:                    record a lifecycle change, but it does not create or delete
-#:                    identities.
+#:                    identities. Phase 6 makes one deliberate exception for the
+#:                    policy record: writing a policy *is* recording a containment
+#:                    decision (a deny, a threshold, an approval requirement), which
+#:                    is this role's job — so it may read, create and update
+#:                    policies, while deleting one stays with the owner and the
+#:                    administrator, exactly as deleting an asset or an agent does.
 #: - AI_ADMIN       — AI asset and agent administration: registers agents and
 #:                    maintains their records and versions, but does not delete
 #:                    them (removing an identity is an administrative decision,
-#:                    not a stewardship one).
+#:                    not a stewardship one). It holds no policy permission on
+#:                    purpose: the parties whose work a policy constrains do not
+#:                    write the constraint, and an AI administrator that governs
+#:                    itself is not governed.
 #: - ANALYST        — reads and analyses security information; no management
-#:                    permission at all.
+#:                    permission at all. Policies are governance configuration, and
+#:                    reading them is neither reading AI inventory nor analysing
+#:                    findings, so an analyst holds none.
 #: - VIEWER         — read-only access to what it is granted, and nothing else.
 ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
     {
@@ -267,6 +294,10 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.AGENT_CREATE,
                 Permission.AGENT_UPDATE,
                 Permission.AGENT_DELETE,
+                Permission.POLICY_READ,
+                Permission.POLICY_CREATE,
+                Permission.POLICY_UPDATE,
+                Permission.POLICY_DELETE,
             }
         ),
         RoleCode.SECURITY_ADMIN: frozenset(
@@ -279,6 +310,9 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.ASSET_UPDATE,
                 Permission.AGENT_READ,
                 Permission.AGENT_UPDATE,
+                Permission.POLICY_READ,
+                Permission.POLICY_CREATE,
+                Permission.POLICY_UPDATE,
             }
         ),
         RoleCode.AI_ADMIN: frozenset(

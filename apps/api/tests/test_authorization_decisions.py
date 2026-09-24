@@ -586,6 +586,7 @@ def _declared_permissions(route: APIRoute) -> set[Permission]:
 PATH_RESOURCES = (
     ("/assets", Resource.ASSET),
     ("/agents", Resource.AGENT),
+    ("/policies", Resource.POLICY),
     ("/members", Resource.USER),
     ("/roles", Resource.ROLE),
     ("/permissions", Resource.ROLE),
@@ -597,6 +598,15 @@ METHOD_ACTIONS = {
     "POST": Action.CREATE,
     "PATCH": Action.UPDATE,
     "DELETE": Action.DELETE,
+}
+
+#: Routes where the method deliberately does *not* name the action, each with the
+#: permission it must declare instead. ``POST`` normally means "create", and a route
+#: here is the exception a reviewer should see rather than an accident the rule would
+#: have caught: the dry run carries a request body, so it is a POST, and it reads
+#: policies — it is the one POST in the application that cannot change anything.
+METHOD_ACTION_EXCEPTIONS: dict[tuple[str, str], Permission] = {
+    ("POST", "/organizations/{organization_id}/policies/evaluate"): Permission.POLICY_READ,
 }
 
 
@@ -624,14 +634,28 @@ def test_every_tenant_route_declares_one_permission_that_matches_its_resource_an
         assert len(declared) == 1, f"{method} {route.path} declares {declared}"
         permission = declared.pop()
 
-        expected_action = METHOD_ACTIONS[method]
+        exception = METHOD_ACTION_EXCEPTIONS.get((method, route.path))
+        expected_action = exception.action if exception is not None else METHOD_ACTIONS[method]
         assert permission.action is expected_action, f"{method} {route.path}: {permission}"
+        if exception is not None:
+            # An exception names the permission exactly, not merely its action.
+            assert permission is exception, f"{method} {route.path}: {permission}"
 
         expected_resource = next(
             (resource for prefix, resource in PATH_RESOURCES if prefix in route.path),
             Resource.ORGANIZATION,
         )
         assert permission.resource is expected_resource, f"{method} {route.path}: {permission}"
+
+    # Every declared exception has to be a route that exists, so the table cannot rot
+    # into a licence for a route that was renamed or removed.
+    declared_exceptions = {
+        (method, route.path)
+        for route in tenant_routes
+        for method in route.methods - {"HEAD", "OPTIONS"}
+        if (method, route.path) in METHOD_ACTION_EXCEPTIONS
+    }
+    assert declared_exceptions == set(METHOD_ACTION_EXCEPTIONS)
 
 
 def test_the_decision_path_contains_no_model_call_and_no_network_client() -> None:
@@ -664,6 +688,96 @@ def test_the_decision_path_contains_no_model_call_and_no_network_client() -> Non
         offenders += [f"{relative.name}: {token}" for token in forbidden if token.lower() in source]
 
     assert offenders == [], f"the decision path reaches outside its inputs: {offenders}"
+
+
+#: The policy layer's decision path: the language, the engine, the combination with
+#: the authorization decision, and the repository the engine's input is loaded from.
+POLICY_DECISION_PATH = (
+    Path("apps/api/src/aicore_api/core/policy.py"),
+    Path("apps/api/src/aicore_api/core/policy_engine.py"),
+    Path("apps/api/src/aicore_api/auth/policy.py"),
+    Path("apps/api/src/aicore_api/db/repositories/policies.py"),
+)
+
+#: The engine and the condition language, which are pure functions of their inputs.
+#: They are held to the stricter rule below: no database, no transport, no clock.
+PURE_POLICY_MODULES = POLICY_DECISION_PATH[:3]
+
+#: SDKs, transports and entropy. ``random`` and ``secrets`` are matched as *code*
+#: (``random.``, ``import random``) rather than as words, so a docstring that says
+#: "no random number generator" does not trip the scan — and a call to one does.
+FORBIDDEN_IN_POLICY_PATH = (
+    "openai",
+    "anthropic",
+    "nemotron",
+    "nebius",
+    "httpx",
+    "requests",
+    "aiohttp",
+    "urllib",
+    "socket",
+    "import random",
+    "from random",
+    "random.",
+    "secrets.",
+    "eval(",
+    "exec(",
+    "compile(",
+    "__import__",
+    "subprocess",
+    "pickle",
+)
+
+#: Reading a clock is not the same as naming a timestamp type: ``evaluated_at:
+#: datetime`` is an argument the caller supplies, while ``datetime.now()`` would make
+#: two identical evaluations able to differ. The call is what is refused.
+CLOCK_READS = (
+    "datetime.now(",
+    "datetime.utcnow(",
+    "datetime.today(",
+    "datetime.fromtimestamp(",
+    "time.time(",
+    "date.today(",
+)
+
+#: The engine reads rows; the *language* and the *engine* may not. Asserted
+#: structurally because "no table queries in condition handlers" is easy to state and
+#: easy to erode.
+DATABASE_TOKENS = ("sqlalchemy", "session", "select(", "text(", "execute(", "cursor", "connect")
+
+
+def _policy_sources() -> dict[Path, str]:
+    """The policy decision path, read once, keyed by path."""
+    repo_root = Path(__file__).resolve().parents[3]
+    return {
+        relative: (repo_root / relative).read_text(encoding="utf-8").lower()
+        for relative in POLICY_DECISION_PATH
+    }
+
+
+def test_the_policy_decision_path_is_deterministic_and_self_contained() -> None:
+    """A policy decision is a function of its arguments — nothing else.
+
+    The same rule Phase 5 holds its authorization layer to, applied to Phase 6: the
+    code that decides what a policy says may not call a model, open a connection,
+    read the clock or execute anything a policy supplied. Evaluation is also
+    side-effect free by construction — the modules here can only return values,
+    because they cannot reach anything that would let them do otherwise.
+    """
+    sources = _policy_sources()
+    offenders = [
+        f"{path.name}: {token}"
+        for path, source in sources.items()
+        for token in (*FORBIDDEN_IN_POLICY_PATH, *CLOCK_READS)
+        if token in source
+    ]
+    assert offenders == [], f"the policy decision path reaches outside its inputs: {offenders}"
+
+    for relative in PURE_POLICY_MODULES:
+        source = sources[relative]
+        assert not [token for token in DATABASE_TOKENS if token in source], (
+            f"{relative.name} must not touch the database"
+        )
 
 
 def test_no_route_or_handler_decides_on_its_own(database_client: TestClient) -> None:

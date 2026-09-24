@@ -32,6 +32,7 @@ from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
 from aicore_api.db.models.membership import Membership, MembershipStatus
 from aicore_api.db.models.organization import Organization
+from aicore_api.db.models.policy import Policy
 from aicore_api.db.models.user import User, UserStatus
 from aicore_api.db.repositories.api_tokens import ApiTokenRepository
 from aicore_api.db.repositories.memberships import MembershipRepository
@@ -333,8 +334,8 @@ def purge_identities(engine: Engine, identities: Iterable[Identity]) -> None:
     organization that another fixture created, "newest first" is not enough — the
     older tenant would still be referenced by the newer person's membership, and
     the foreign key (correctly) refuses the delete. So: every credential, then
-    every membership, then the organizations, then the people. Each phase is one
-    statement per row, all committed together.
+    every owned resource, then every membership, then the organizations, then the
+    people. Each phase is one statement per row, all committed together.
     """
     identities = list(identities)
     with _session(engine) as session:
@@ -349,6 +350,17 @@ def purge_identities(engine: Engine, identities: Iterable[Identity]) -> None:
                 session.execute(
                     delete(Asset).where(Asset.organization_id == identity.organization_id)
                 )
+
+        for identity in identities:
+            # Policies go with the inventory, and for the same reason: a policy
+            # references the organization with RESTRICT, so an organization that
+            # still has one cannot be deleted. Unlike an asset, a policy is not
+            # owned by a membership, so this phase sweeps *every* organization the
+            # identity belongs to — which is where a test could have made one. The
+            # version history follows by cascade.
+            for organization_id, _membership_id in identity.memberships():
+                with bind_tenant(organization_id):
+                    session.execute(delete(Policy).where(Policy.organization_id == organization_id))
 
         for identity in identities:
             for organization_id, membership_id in identity.memberships():

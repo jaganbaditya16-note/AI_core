@@ -8,9 +8,13 @@ schema-drift test would catch the omission).
 Phase 1 shipped the tenant root. Phase 2 added identity and authorization:
 ``users`` and ``api_tokens`` (who is calling), ``roles`` / ``permissions`` /
 ``role_permissions`` (what a role may do) and ``memberships`` (the tenant-owned
-grant that ties the two together). Phase 3 adds the inventory: ``assets``, the
+grant that ties the two together). Phase 3 added the inventory: ``assets``, the
 tenant-owned record of every AI-related thing an organization knows about. Phase 4
-adds the agent registry: ``agents``, the stable identity of one of those assets.
+added the agent registry: ``agents``, the stable identity of one of those assets.
+Phase 6 adds the policy record: ``policies`` (the identity, rationale and lifecycle
+of one policy) and ``policy_versions`` (its append-only definitions, one row per
+version — a published version is never rewritten, so a recorded decision can name
+the exact definition it was made from).
 
 Keep the per-type distinction in ``core/assets.py``, not here: assets of different
 types share one table on purpose (see ``db/models/asset.py``).
@@ -28,6 +32,7 @@ from aicore_api.db.models.organization import (
     Organization,
     OrganizationStatus,
 )
+from aicore_api.db.models.policy import Policy, PolicyVersion
 from aicore_api.db.models.rbac import Permission, Role, role_permissions
 from aicore_api.db.models.user import User, UserStatus, normalize_email
 
@@ -42,6 +47,8 @@ __all__ = [
     "Organization",
     "OrganizationStatus",
     "Permission",
+    "Policy",
+    "PolicyVersion",
     "Role",
     "User",
     "UserStatus",

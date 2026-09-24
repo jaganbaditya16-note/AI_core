@@ -215,7 +215,15 @@ was widened:
 | `agent.update` | ✅ | ✅ | ✅ | ✅ | — | — |
 | `agent.delete` | ✅ | ✅ | — | — | — | — |
 
-Totals: owner 16, admin 13, security_admin 8, ai_admin 8, analyst 4, viewer 3.
+Totals as Phase 5 left them: owner 16, admin 13, security_admin 8, ai_admin 8,
+analyst 4, viewer 3.
+
+> **Phase 6 extended this catalog** with `policy.read` / `policy.create` /
+> `policy.update` / `policy.delete`, granted to owner, admin and (read/create/update
+> only) security_admin: **20 permissions, 63 grants**, head `0005_policies`. The
+> matrix in this document is the Phase 5 review and is left as it was written; the
+> policy grants and the reasoning behind them are in
+> [policies.md](policies.md#who-may-manage-policies).
 
 `test_the_role_matrix_is_exactly_the_documented_one` spells the matrix out a second
 time, literally, on purpose: the existing parity test would still pass if somebody
@@ -225,8 +233,10 @@ change a visible diff.
 ## Database
 
 Phase 5 reviewed the catalog tables against the requirements and **found no schema
-change necessary** — so there is no Phase 5 migration, and the head stays
-`0004_agents`:
+change necessary** — so there was no Phase 5 migration and the head stayed
+`0004_agents`. Phase 6 left those tables exactly as they were too: it added its four
+policy permissions *as rows* in `0005_policies`, using the invariants below rather
+than new ones:
 
 | Requirement | Where it already holds |
 | --- | --- |
@@ -239,8 +249,11 @@ change necessary** — so there is no Phase 5 migration, and the head stays
 | Tenant correctness | the catalog is installation-wide reference data by design; which role a member holds is tenant-owned (`memberships`), so "who may do what here" is always a join from a tenant row |
 
 Nothing was added because nothing was missing: a redundant constraint or an
-unused column would be a claim the phase cannot justify. The seeded catalog is
-unchanged at **16 permissions, 6 roles, 52 grants**.
+unused column would be a claim those phases could not justify. Phase 6 consequently
+added no catalog *schema* either — only the four permission rows and their grants,
+in its own migration (`0005_policies`), which is compared against
+`core/permissions.py` by `tests/test_migrations.py`. The catalog now holds **20
+permissions, 6 roles, 63 grants**.
 
 ## API impact
 

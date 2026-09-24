@@ -17,11 +17,17 @@ version — a published version is never rewritten, so a recorded decision can n
 the exact definition it was made from). Phase 7 adds ``action_executions``: the
 idempotency ledger for admitted actions — one row per caller-supplied key, holding
 the recorded outcome so a retry returns it instead of executing the action twice. It
-is not the audit trail; that is Phase 8's, and this table deliberately records no
-actor and no refusal.
+is not the audit trail, and Phase 8 did not make it one: ``audit_events`` is the trail,
+and this table still records no actor and no refusal.
 
 Keep the per-type distinction in ``core/assets.py``, not here: assets of different
 types share one table on purpose (see ``db/models/asset.py``).
+
+Phase 8 adds ``audit_events``: one append-only row per security-relevant event —
+who caused it (as the server resolved them), what was decided, what came of it, and
+which request it belonged to. It is written by
+``aicore_api.audit.writer.AuditWriter`` and protected by a database trigger that
+refuses ``UPDATE``, ``DELETE`` and ``TRUNCATE``.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from aicore_api.db.models.action_execution import ActionExecution
 from aicore_api.db.models.agent import Agent
 from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
+from aicore_api.db.models.audit_event import AuditEvent
 from aicore_api.db.models.membership import Membership, MembershipStatus
 from aicore_api.db.models.organization import (
     NAME_MAX_LENGTH,
@@ -48,6 +55,7 @@ __all__ = [
     "Agent",
     "ApiToken",
     "Asset",
+    "AuditEvent",
     "Membership",
     "MembershipStatus",
     "Organization",

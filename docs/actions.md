@@ -193,9 +193,11 @@ request, not a re-run.
 
 **The ledger is not an audit trail.** It records identifiers, a fingerprint, a status
 and what the adapter reported — no actor, no role, no rationale and no row for a
-refusal. What happened, for whom, whether it was allowed and what it changed is a
-later phase's system; nothing here pretends to be it, and no audit record, event
-stream, dashboard or approval queue exists.
+refusal. What happened, for whom, whether it was allowed and what it changed is the
+Phase 8 trail: a separate table (`aicore.audit_events`), written by a separate writer,
+which records the refusals this table deliberately forgets. The two are one decision
+sequence seen twice, and neither stands in for the other — see [audit.md](audit.md).
+No dashboard and no approval queue exists in either of them.
 
 ## The API
 

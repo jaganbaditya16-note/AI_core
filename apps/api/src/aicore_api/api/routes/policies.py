@@ -331,6 +331,7 @@ def create_policy(
             resource_type="policy",
             resource_id=policy.id,
             actor_membership_id=context.membership_id,
+            actor_id=context.user_id,
             data={
                 "resource": read.resource.value,
                 "action": read.action.value,
@@ -340,7 +341,8 @@ def create_policy(
                 "status": read.status.value,
                 "version": read.version,
             },
-        )
+        ),
+        session=session,
     )
     return read
 
@@ -561,8 +563,10 @@ def update_policy(
                     resource_type="policy",
                     resource_id=policy.id,
                     actor_membership_id=context.membership_id,
+                    actor_id=context.user_id,
                     data={"fields": sorted(changed)},
-                )
+                ),
+                session=session,
             )
 
     definition_fields = payload.definition_fields
@@ -579,6 +583,7 @@ def update_policy(
                     resource_type="policy",
                     resource_id=policy.id,
                     actor_membership_id=context.membership_id,
+                    actor_id=context.user_id,
                     data={
                         "version": published.version,
                         "previous_version": current.version,
@@ -588,7 +593,8 @@ def update_policy(
                         "priority": published.priority,
                         "condition_count": len(published.conditions),
                     },
-                )
+                ),
+                session=session,
             )
 
     if "status" in payload.model_fields_set and payload.status is not None:
@@ -606,8 +612,10 @@ def update_policy(
                     resource_type="policy",
                     resource_id=policy.id,
                     actor_membership_id=context.membership_id,
+                    actor_id=context.user_id,
                     data={"status": policy.status},
-                )
+                ),
+                session=session,
             )
 
     return _policy_read(repository, policy)
@@ -638,23 +646,30 @@ def delete_policy(policy_id: uuid.UUID, context: DeletePolicies, session: Sessio
         context, policy, permission=Permission.POLICY_DELETE, detail=_POLICY_NOT_FOUND
     )
     definition = _run(lambda: repository.definition_of(policy))
+    # Read the definition, remove the policy, then record what was removed — the record is a
+    # claim about the past, so it is written after the change it describes. The values are
+    # captured first because the rows they describe are about to be gone.
+    removed = {
+        "resource": definition.resource.value,
+        "action": definition.action.value,
+        "effect": definition.effect.value,
+        "status": policy.status,
+        "version": definition.version,
+    }
+    removed_id = policy.id
+    repository.delete(policy)
     emit_event(
         DomainEvent(
             name=POLICY_DELETED,
             organization_id=context.organization_id,
             resource_type="policy",
-            resource_id=policy.id,
+            resource_id=removed_id,
             actor_membership_id=context.membership_id,
-            data={
-                "resource": definition.resource.value,
-                "action": definition.action.value,
-                "effect": definition.effect.value,
-                "status": policy.status,
-                "version": definition.version,
-            },
-        )
+            actor_id=context.user_id,
+            data=removed,
+        ),
+        session=session,
     )
-    repository.delete(policy)
 
 
 def _merge_definition(payload: PolicyUpdateRequest, current: PolicyDefinition) -> dict[str, Any]:

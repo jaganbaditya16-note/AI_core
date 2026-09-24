@@ -59,6 +59,7 @@ from aicore_api.core.assets import (
     normalize_name,
     validate_metadata,
 )
+from aicore_api.core.audit import AuditSource
 from aicore_api.core.events import ASSET_DISCOVERED, DomainEvent, emit_event
 from aicore_api.db.models.asset import EXTERNAL_IDENTIFIER_MAX_LENGTH, Asset
 from aicore_api.db.models.membership import MembershipStatus
@@ -167,8 +168,9 @@ def register_discovered_asset(
 
     Returns the asset and whether this call created it. A first sighting emits
     ``asset.discovered``; a refresh does not, because "we saw it again" is not a
-    change the organization needs to be told about, and a log full of them would
-    bury the one that matters.
+    change the organization needs to be told about, and a trail full of them would
+    bury the one that matters. The event is recorded as a *system* event with an
+    ingestion source: an integration observed something, and no person did.
 
     The caller supplies the organization, never the report: an integration is
     configured for a tenant, and that configuration is what this argument is.
@@ -206,6 +208,9 @@ def register_discovered_asset(
         observed_at=report.observed_at or datetime.now(UTC),
     )
     if created:
+        # No actor, and none is invented: an integration reported something, and no person
+        # performed it. Phase 8 records that as a *system* event — the honest attribution —
+        # with ``source=ingestion`` rather than a request id, because there was no request.
         emit_event(
             DomainEvent(
                 name=ASSET_DISCOVERED,
@@ -213,11 +218,14 @@ def register_discovered_asset(
                 resource_type="asset",
                 resource_id=asset.id,
                 actor_membership_id=None,
+                actor_id=None,
                 data={
                     "asset_type": asset.asset_type,
                     "discovery_source": asset.discovery_source,
                     "discovery_state": asset.discovery_state,
                 },
-            )
+            ),
+            session=session,
+            source=AuditSource.INGESTION,
         )
     return DiscoveryResult(asset=asset, created=created)

@@ -34,7 +34,7 @@ A permission identifier is `resource.action`, and both halves are closed enums i
 | `organization` | `read`, `update` | The tenant itself |
 | `user` | `read`, `manage` | The member directory and the membership lifecycle |
 | `role` | `read`, `manage` | The role catalog — and the permission catalogue, which is read through it |
-| `audit` | `read` | The audit trail (its subject arrives in a later phase) |
+| `audit` | `read` | The Phase 8 audit trail: read-only, through one endpoint |
 | `security` | `read` | Security posture and findings (likewise) |
 | `asset` | `read`, `create`, `update`, `delete` | The AI inventory |
 | `agent` | `read`, `create`, `update`, `delete` | The agent registry |
@@ -316,8 +316,11 @@ bash scripts/verify.sh      # lint, format, typecheck, tests, secrets, compose
 
 ## What Phase 5 does not implement
 
-- **No policy engine and no policy language.** There is no place to write a rule,
-  no policy document, no decision log beyond the structured decision object.
+- **No policy engine and no policy language.** Phase 5 decides; the Phase 6 policy
+  layer can only further restrict it, and the Phase 7 firewall consumes both. What this
+  phase does not do is keep history: authorization writes no row of its own, and the
+  Phase 8 trail records a decision only when the pipeline acts on it — see
+  [audit.md](audit.md).
 - **No runtime enforcement.** Nothing intercepts an action, blocks a tool or stops
   an agent. `status: suspended` remains a record.
 - **No approvals, no kill switch.** Those arrive with the phases that implement
@@ -331,5 +334,8 @@ bash scripts/verify.sh      # lint, format, typecheck, tests, secrets, compose
   row carries.
 - **No permission-mutation API and no custom roles.** Roles are shipped data,
   changed by reviewed migration.
-- **No audit trail.** A decision *can* be recorded — that is why it is a value with
-  a reason — but nothing writes one yet.
+- **The trail records; it never decides.** Phase 8 writes one audit event per action
+  decision — including the denials and the approval requirements this layer returns —
+  and one per lifecycle change. It takes no part in a decision: a decision is made
+  first, then recorded; `audit.read` guards the read side, and nothing can write the
+  trail through the API.

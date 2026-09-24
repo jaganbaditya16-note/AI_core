@@ -37,6 +37,7 @@ from collections.abc import Callable
 from typing import Annotated, Any, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
 
 from aicore_api.api.ownership import resolve_owner_membership
 from aicore_api.api.scope import require_instance_scope
@@ -195,12 +196,20 @@ def _run(operation: Callable[[], _T]) -> _T:
         ) from exc
 
 
-def _registered_events(context: OrganizationContext, result: RegistrationResult) -> None:
+def _registered_events(
+    context: OrganizationContext, result: RegistrationResult, session: Session
+) -> None:
     """Emit what a registration actually did.
 
     Two events, not one, when the registration also created the inventory record: an
     agent acquired an identity *and* an asset came into existence, and a later audit
     view will want to read either without reconstructing the other.
+
+    Two events here is deliberate rather than duplicated: they are about different
+    resources and answer different questions ("what came into the inventory?" and "which
+    identity appeared?"). Phase 8's audit trail keeps them apart for exactly that reason —
+    one denied action must not become four rows, but one registration that created two
+    things is two facts.
     """
     agent = result.agent
     if result.asset_created:
@@ -211,8 +220,10 @@ def _registered_events(context: OrganizationContext, result: RegistrationResult)
                 resource_type="asset",
                 resource_id=agent.asset_id,
                 actor_membership_id=context.membership.id,
+                actor_id=context.user_id,
                 data={"asset_type": "agent", "discovery_state": agent.asset.discovery_state},
-            )
+            ),
+            session=session,
         )
     emit_event(
         DomainEvent(
@@ -221,12 +232,14 @@ def _registered_events(context: OrganizationContext, result: RegistrationResult)
             resource_type="agent",
             resource_id=agent.id,
             actor_membership_id=context.membership.id,
+            actor_id=context.user_id,
             data={
                 "category": agent.category,
                 "version": agent.version,
                 "asset_id": str(agent.asset_id),
             },
-        )
+        ),
+        session=session,
     )
 
 
@@ -344,7 +357,7 @@ def register_agent(
             identity_metadata=identity_metadata,
         )
     )
-    _registered_events(context, result)
+    _registered_events(context, result, session)
     return _agent_read(result.agent)
 
 
@@ -480,8 +493,10 @@ def update_agent(
                 resource_type="agent",
                 resource_id=agent.id,
                 actor_membership_id=context.membership.id,
+                actor_id=context.user_id,
                 data={"fields": sorted(changed)},
-            )
+            ),
+            session=session,
         )
     return _agent_read(agent)
 
@@ -511,28 +526,35 @@ def delete_agent(agent_id: uuid.UUID, context: DeleteAgents, session: SessionDep
     require_instance_scope(
         context, agent, permission=Permission.AGENT_DELETE, detail=_AGENT_NOT_FOUND
     )
+    # Read the facts, remove the rows, then record — the same order and the same reason as
+    # the inventory's delete: an audit event is a claim that something happened, so it is
+    # written after it did. The identifiers are captured first because the rows they name
+    # are about to be gone.
+    agent_id_value = agent.id
+    asset_id = agent.asset_id
+    category, version, identity_id = agent.category, agent.version, str(agent.identity_id)
+    repository.delete(agent)
     emit_event(
         DomainEvent(
             name=AGENT_DELETED,
             organization_id=context.organization_id,
             resource_type="agent",
-            resource_id=agent.id,
+            resource_id=agent_id_value,
             actor_membership_id=context.membership.id,
-            data={
-                "category": agent.category,
-                "version": agent.version,
-                "identity_id": str(agent.identity_id),
-            },
-        )
+            actor_id=context.user_id,
+            data={"category": category, "version": version, "identity_id": identity_id},
+        ),
+        session=session,
     )
     emit_event(
         DomainEvent(
             name=ASSET_DELETED,
             organization_id=context.organization_id,
             resource_type="asset",
-            resource_id=agent.asset_id,
+            resource_id=asset_id,
             actor_membership_id=context.membership.id,
+            actor_id=context.user_id,
             data={"asset_type": "agent", "removed_with": "agent"},
-        )
+        ),
+        session=session,
     )
-    repository.delete(agent)

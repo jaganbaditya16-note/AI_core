@@ -588,6 +588,7 @@ PATH_RESOURCES = (
     ("/agents", Resource.AGENT),
     ("/policies", Resource.POLICY),
     ("/actions", Resource.ACTION),
+    ("/audit-events", Resource.AUDIT),
     ("/members", Resource.USER),
     ("/roles", Resource.ROLE),
     ("/permissions", Resource.ROLE),

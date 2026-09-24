@@ -5,9 +5,12 @@ reviewed Alembic revisions (``database/migrations/versions``). That makes drift
 between a model and a revision a real failure mode — the application would query
 columns the database does not have — so the comparison is asserted here.
 
-Two properties are checked:
+Three properties are checked:
 
 - **the migrated schema matches the models** (the migration is not out of date);
+- **the revision chain is exactly the one this build publishes**, so a revision that
+  was renamed, reordered or quietly removed is a failing test rather than a surprise
+  during a deployment;
 - **an unmigrated database fails readiness** rather than being silently usable,
   which is how a missing migration would otherwise present itself in production.
 """
@@ -25,7 +28,7 @@ from aicore_api.db.models.organization import Organization
 from aicore_api.db.repositories.rbac import RoleCatalog
 
 CONFIG = Config("alembic.ini")
-EXPECTED_REVISION = "0006_action_firewall"
+EXPECTED_REVISION = "0007_audit_events"
 #: Oldest first: each revision's ``down_revision`` must be the one before it.
 EXPECTED_CHAIN = [
     "0001_organizations",
@@ -34,6 +37,7 @@ EXPECTED_CHAIN = [
     "0004_agents",
     "0005_policies",
     "0006_action_firewall",
+    "0007_audit_events",
 ]
 
 
@@ -172,6 +176,7 @@ def test_the_application_schema_is_exactly_what_the_models_declare(
         "policies",
         "policy_versions",
         "action_executions",
+        "audit_events",
     }
     assert live == expected
     assert {table.name for table in Base.metadata.tables.values()} == expected

@@ -105,6 +105,43 @@ EXPECTED_ACTION_SCHEMAS = {
 }
 
 
+#: Phase 8's published shapes. The read side is the whole client surface of the audit
+#: trail, and it is a *response* model: there is no request schema and no write route,
+#: because a client cannot create, change or delete an event. The negative half is the
+#: point — the trail publishes no actor, decision, organization, timestamp or
+#: correlation field that a caller could have supplied.
+EXPECTED_AUDIT_SCHEMAS = {
+    "AuditEventRead": {
+        "id",
+        "organization_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "actor_type",
+        "actor_id",
+        "actor_membership_id",
+        "agent_id",
+        "resource_type",
+        "resource_id",
+        "action",
+        "decision",
+        "outcome",
+        "correlation_id",
+        "request_id",
+        "source",
+        "metadata",
+    },
+    "AuditEventListResponse": {
+        "organization_id",
+        "items",
+        "limit",
+        "offset",
+        "count",
+        "total",
+    },
+}
+
+
 EXPECTED_ASSET_REQUEST_FIELDS = {
     "AssetCreate": {
         "name",
@@ -197,6 +234,10 @@ ASSET_ROUTES = (
     "/organizations/{organization_id}/assets/owners",
     "/organizations/{organization_id}/assets/{asset_id}",
 )
+
+#: Phase 8: one path, and it only reads. A write route here would be a way to
+#: fabricate history, so the absence is asserted rather than assumed.
+AUDIT_ROUTES = ("/organizations/{organization_id}/audit-events",)
 
 
 def test_openapi_document_is_served(client: TestClient) -> None:
@@ -375,6 +416,7 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         ("get", "/organizations/{organization_id}/permissions"),
         *((verb, route) for route in ASSET_ROUTES for verb in ("get",)),
         *((verb, route) for route in AGENT_ROUTES for verb in ("get",)),
+        *((verb, route) for route in AUDIT_ROUTES for verb in ("get",)),
     ):
         assert "401" in paths[route][method]["responses"], route
 
@@ -400,6 +442,7 @@ def test_protected_routes_document_their_refusals(client: TestClient) -> None:
         "/organizations/{organization_id}/permissions",
         *ASSET_ROUTES,
         *AGENT_ROUTES,
+        *AUDIT_ROUTES,
     ):
         responses = paths[route]["get"]["responses"]
         assert "403" in responses, route
@@ -460,6 +503,64 @@ def test_the_action_firewall_contract_is_published(client: TestClient) -> None:
     }
 
 
+def test_the_audit_trail_contract_is_read_only(client: TestClient) -> None:
+    """The trail is queried, never written: the document is the proof.
+
+    Every field the trail publishes is server-produced — a client sends a filter and
+    receives events. There is no create, update or delete schema and no second audit
+    path, so a caller cannot fabricate an event or rewrite one, and the absence of
+    those shapes is what a client reading only the document can see.
+    """
+    document = client.get("/openapi.json").json()
+    schemas = document["components"]["schemas"]
+    paths = document["paths"]
+
+    for name, fields in EXPECTED_AUDIT_SCHEMAS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    audit_paths = {path: methods for path, methods in paths.items() if "audit" in path}
+    assert set(audit_paths) == set(AUDIT_ROUTES)
+    for methods in audit_paths.values():
+        assert set(methods) == {"get"}, methods
+
+    # The vocabularies are enumerated in the document rather than described in prose,
+    # so a client switching on an event type is checked against the real list.
+    assert set(schemas["AuditEventType"]["enum"]) == {
+        "asset.created",
+        "asset.updated",
+        "asset.deleted",
+        "asset.discovered",
+        "agent.registered",
+        "agent.updated",
+        "agent.deleted",
+        "policy.created",
+        "policy.updated",
+        "policy.version_published",
+        "policy.status_changed",
+        "policy.deleted",
+        "action.requested",
+        "action.denied",
+        "action.require_approval",
+        "action.executed",
+        "action.replayed",
+        "action.failed",
+    }
+    assert set(schemas["AuditOutcome"]["enum"]) == {
+        "success",
+        "failed",
+        "blocked",
+        "not_executed",
+        "replayed",
+        "pending",
+    }
+    assert set(schemas["AuditResourceType"]["enum"]) == {"asset", "agent", "policy"}
+    assert set(schemas["ActorType"]["enum"]) == {"human", "system"}
+    assert set(schemas["AuditSource"]["enum"]) == {"api", "ingestion"}
+    # One decision vocabulary for the trail, the policy engine and the firewall.
+    assert set(schemas["AuditDecision"]["enum"]) == set(schemas["FirewallOutcome"]["enum"])
+
+
 def test_the_execution_route_documents_every_refusal(client: TestClient) -> None:
     """The one route that can execute something says how it fails, in the document.
 
@@ -508,6 +609,7 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         | {field for fields in EXPECTED_ASSET_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_AGENT_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_ACTION_SCHEMAS.values() for field in fields}
+        | {field for fields in EXPECTED_AUDIT_SCHEMAS.values() for field in fields}
     )
     for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
@@ -540,6 +642,8 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "ActionOutcome",
         "ActionTarget",
         "FirewallDecision",
+        "AuditEvent",
+        "AuditEventListResponse",
     ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
 
@@ -560,6 +664,12 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "ActionSensitivity",
         "FirewallOutcome",
         "FirewallReason",
+        "AuditEventType",
+        "AuditResourceType",
+        "ActorType",
+        "AuditSource",
+        "AuditDecision",
+        "AuditOutcome",
     ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
     for value in (
@@ -589,6 +699,15 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "approval_required",
         "idempotency_conflict",
         "execution_failed",
+        "asset.discovered",
+        "agent.registered",
+        "policy.version_published",
+        "action.requested",
+        "action.replayed",
+        "not_executed",
+        "replayed",
+        "pending",
+        "ingestion",
     ):
         assert f'"{value}"' in source, f"packages/types is missing the literal {value!r}"
 

@@ -89,14 +89,25 @@ class ActionFactory:
         self.client.headers["Authorization"] = f"Bearer {self.token}"
         return self.client
 
-    def execute(self, target_id: uuid.UUID | str, **overrides: Any) -> Any:
+    def execute(
+        self,
+        target_id: uuid.UUID | str,
+        *,
+        request_id: str | None = None,
+        **overrides: Any,
+    ) -> Any:
         """``POST`` one execution request as the owner, without asserting.
 
         Raw on purpose: half of Phase 7 is about refusals, and a test asserting a 403
         should not have to hand-build the request to see it.
+
+        ``request_id`` is the one field that is a *header* rather than a body: Phase 8
+        records the request's id as the correlation of every event the request produced, so
+        a test about grouping has to be able to say what the request called itself.
         """
         payload = execution_payload(target_id, **overrides)
-        response = self._as_owner().post(self.path, json=payload)
+        headers = {"X-Request-ID": request_id} if request_id is not None else None
+        response = self._as_owner().post(self.path, json=payload, headers=headers)
         self.created.append(str(payload["idempotency_key"]))
         return response
 

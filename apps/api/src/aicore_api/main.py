@@ -28,32 +28,39 @@ AICore is an enterprise AI control plane.
 
 **Implemented today:** health endpoints, the PostgreSQL multi-tenancy foundation,
 the authentication and RBAC foundation on top of it, the AI asset inventory, the
-agent registry, the authorization foundation, the context-aware policy engine, and
-the action firewall. Bearer API tokens identify a user, memberships bind them to an
-organization with a role, routes authorize against explicit permissions written as
-``resource.action`` over closed vocabularies, the inventory records what AI-related
-things an organization knows about, the registry gives an ``agent`` asset a stable
-identity that survives renames and version changes, an organization can define
-policies — effect, priority and structured conditions over a closed field vocabulary
-— that refine those permissions by context, and one endpoint can run an action from a
-closed, code-level catalogue through all of it. Every decision is deterministic and
-computed from data, never by a model: authorization answers *may this caller use this
-permission*, the policy engine answers *given that, does the context satisfy the
-organization's policy*, and the firewall combines both into one outcome — allow,
-deny, or require approval — where only allow reaches an adapter and neither layer can
-ever widen the other.
+agent registry, the authorization foundation, the context-aware policy engine, the
+action firewall, and the audit trail. Bearer API tokens identify a user, memberships
+bind them to an organization with a role, routes authorize against explicit
+permissions written as ``resource.action`` over closed vocabularies, the inventory
+records what AI-related things an organization knows about, the registry gives an
+``agent`` asset a stable identity that survives renames and version changes, an
+organization can define policies — effect, priority and structured conditions over a
+closed field vocabulary — that refine those permissions by context, one endpoint can
+run an action from a closed, code-level catalogue through all of it, and every
+security-relevant thing that happens is recorded in an append-only trail that the
+organization can read back. Every decision is deterministic and computed from data,
+never by a model: authorization answers *may this caller use this permission*, the
+policy engine answers *given that, does the context satisfy the organization's
+policy*, the firewall combines both into one outcome — allow, deny, or require
+approval — where only allow reaches an adapter and neither layer can ever widen the
+other, and the audit trail records what the others decided without deciding anything
+itself.
 
 Every tenant-scoped route resolves the caller's membership in the organization in
 its path before it runs. The catalogue holds one action today, and it reads and
 reports: ``agent.posture_check`` assesses facts this system already stores about one
-registered agent, and its adapter opens no connection, no file and no socket. Agent
-execution, approval workflows, audit records, incidents and intelligence features are
-still not implemented, and no endpoint pretends otherwise: nothing here starts, stops,
-blocks, approves or contains an agent, ``status: suspended`` is a record rather than a
-runtime control, an approval requirement is a value with no workflow behind it, and a
-policy evaluation is a dry run that reports what the policies say and changes nothing.
-Tenant creation remains a development/test provisioning path, because this build has
-no platform-administrator concept that could authorize it.
+registered agent, and its adapter opens no connection, no file and no socket. The
+audit trail is written by the platform and read through one endpoint; no route lets a
+client create, change or delete an event, and no permission grants one. Agent
+execution, approval workflows, monitoring, anomaly detection, incidents, the kill
+switch and intelligence features are still not implemented, and no endpoint pretends
+otherwise: nothing here starts, stops, blocks, approves or contains an agent,
+``status: suspended`` is a record rather than a runtime control, an approval
+requirement is a value with no workflow behind it, the audit trail is evidence rather
+than detection, and a policy evaluation is a dry run that reports what the policies
+say and changes nothing. Tenant creation remains a development/test provisioning
+path, because this build has no platform-administrator concept that could authorize
+it.
 """
 
 
@@ -124,6 +131,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "organization's policies and the firewall all permit it. A refusal "
                     "is an error naming its reason; an approval requirement is returned "
                     "as a value and never executed."
+                ),
+            },
+            {
+                "name": "audit",
+                "description": (
+                    "The organization's audit trail: one read-only endpoint over an "
+                    "append-only record of what happened — who caused it, what was "
+                    "decided, and what came of it. There is deliberately no endpoint "
+                    "that creates, changes or deletes an event, and no permission that "
+                    "grants one."
                 ),
             },
         ],

@@ -1,15 +1,17 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 6: context-aware policy
-engine**. Phase 0 delivered the skeleton, Phase 1 the PostgreSQL schema and tenant
-boundary, Phase 2 the identity layer on top of it (bearer tokens identify a user,
-memberships bind them to an organization with a role, protected routes authorize
-against explicit permissions), Phase 3 the AI asset inventory, Phase 4 the agent
-registry (a stable, server-generated identity for one of those assets), Phase 5 the
-authorization foundation (a closed resource/action vocabulary and a deterministic,
-structured authorization decision) and Phase 6 the policy engine: org-scoped policy
-definitions, a closed condition language with typed values, a deterministic
-evaluator, and versioned, append-only policy history.
+**Enterprise AI Control Plane** — currently at **Phase 8: the audit trail**. Phase 0
+delivered the skeleton, Phase 1 the PostgreSQL schema and tenant boundary, Phase 2 the
+identity layer on top of it (bearer tokens identify a user, memberships bind them to an
+organization with a role, protected routes authorize against explicit permissions),
+Phase 3 the AI asset inventory, Phase 4 the agent registry (a stable, server-generated
+identity for one of those assets), Phase 5 the authorization foundation (a closed
+resource/action vocabulary and a deterministic, structured authorization decision),
+Phase 6 the policy engine (org-scoped definitions, a closed condition language, a
+deterministic evaluator, versioned history), Phase 7 the action firewall (the enforcement
+boundary: only `ALLOW` reaches an adapter) and Phase 8 the audit trail: an append-only,
+tenant-scoped record of security-relevant activity, written by the platform and read
+through one read-only endpoint.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -23,8 +25,11 @@ described in [`docs/inventory.md`](docs/inventory.md). The policy engine
 **evaluates**; since Phase 7 the **action firewall** enforces — for one thing only:
 running a registered action from a closed, code-level catalogue, through a pipeline
 that authenticates, authorizes, evaluates a policy and decides before any adapter is
-called. Only `ALLOW` reaches an adapter. Nothing intercepts an agent, nothing is
-blocked at runtime, no approval is ever granted and nothing is monitored —
+called. Only `ALLOW` reaches an adapter. Since Phase 8 that pipeline also **records**:
+one append-only event per security-relevant operation, with server-resolved attribution
+and a sanitized summary, queryable per organization through one read-only endpoint.
+Nothing intercepts an agent, nothing is blocked at runtime, no approval is ever granted,
+nothing is monitored and no record is acted on automatically —
 [`docs/phase-0-scope.md`](docs/phase-0-scope.md) lists exactly what is absent.
 
 ## Architecture direction
@@ -71,7 +76,8 @@ apps/
     src/aicore_api/     main · config · cli · api · auth · core · db · discovery · schemas
     tests/              Pytest suite (unit + PostgreSQL integration)
 packages/
-  types/                shared API contract types (health, errors, organizations, identity, assets, agents, permissions, policies)
+  types/                shared API contract types (health, errors, organizations, identity, assets,
+                        agents, permissions, policies, actions, audit)
 database/
   init/                 one-time bootstrap SQL (schema namespace only)
   migrations/           Alembic environment and revisions
@@ -81,8 +87,9 @@ database/
     versions/0004_agents.py
     versions/0005_policies.py
     versions/0006_action_firewall.py
+    versions/0007_audit_events.py
 tests/e2e/              Playwright smoke tests
-docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, ADRs
+docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, audit, ADRs
 infrastructure/         docker-compose.yml
 scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
@@ -183,12 +190,13 @@ carries `X-Request-ID`.
   action. `POST /organizations` remains a development/test provisioning route
   (404 everywhere else), because this phase has no platform-administrator concept
   that could authorize tenant creation.
-- **No permissions for resources that do not exist.** `audit.read` and
-  `security.read` are part of the catalog and appear on `GET /me`, but there is no
-  audit trail or security finding to read yet — no route pretends otherwise.
+- **`security.read` has no subject yet.** It is part of the catalog and appears on
+  `GET /me`, but there is no security finding to read — no route pretends otherwise.
+  (`audit.read` is no longer in that position: since Phase 8 it guards the audit
+  trail's read-only endpoint.)
 - **No domain tables beyond the tenant root, the identity tables, the asset
-  inventory, the agent registry and the policy record.** The event and incident
-  tables arrive in later phases, through migrations.
+  inventory, the agent registry, the policy record, the execution ledger and the audit
+  trail.** Incident and monitoring tables arrive in later phases, through migrations.
 - **No agent runtime.** An agent registry record names an agent; it does not run
   one. There is no execution, no session, no tool invocation, no credential issued
   to an agent, and `status: suspended` is a recorded state rather than a kill
@@ -207,48 +215,65 @@ carries `X-Request-ID`.
   [docs/actions.md](docs/actions.md).
 - **No AI features.** No model provider is integrated; no runtime containment,
   behaviour monitoring or incident handling.
+- **The audit trail is a record, not a control.** There is no monitoring dashboard, no
+  metrics, no anomaly detection, no baselining, no alerting, no incident management, no
+  retention job and no hash chain — a plain SHA-256 chain stored beside the rows it
+  covers would be recomputable by anyone who can write them, so the phase implements the
+  part that is real without a key-management design and states the deferral:
+  [docs/audit.md](docs/audit.md).
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
 
-## What Phase 6 adds
+## What Phase 8 adds
 
-The **context-aware policy engine**: a way for an organization to record what it
-decides about an action in a given situation, and a deterministic evaluator that turns
-those records into a decision — without ever replacing the authorization layer.
+The **audit trail**: the durable, tenant-scoped record of security-relevant activity —
+who did what, in which organization, when, against which resource, with what decision,
+and what came of it. It observes and records; it never decides or executes, and it
+cannot change an answer.
 
-- **Policy definitions, org-scoped** — `resource.action` from the permission catalogue,
-  an effect (`allow` / `deny` / `require_approval`), a priority, a status and a list of
-  conditions. One tenant per policy; there is no global or shared policy.
-- **A closed condition language** — nine fields with typed values and closed sets, and
-  eight operators. No expressions, no user code, no `eval()`, no policy-authored SQL,
-  no `OR`, no nesting. A value that does not fit its field is refused before the policy
-  is stored, and an invalid stored definition cannot be activated.
-- **A deterministic evaluator** — `deny` beats `require_approval` beats `allow`,
-  then priority, then name and id, and never the order rows arrived in. The engine is a
-  pure function of its arguments: no clock, no database, no network, no model call,
-  asserted structurally.
-- **A policy can only restrict** — the effective answer is the authorization decision
-  *and* the policy decision, so a Phase 5 denial can never become a permit, and missing
-  context never reads as "allowed".
-- **Versioned history** — editing a definition appends a version and never rewrites
-  one, so a decision that names a version stays explainable. Labels and rationale are
-  not versions; an edit that changes nothing is not a version either.
-- **Four policy permissions** — `policy.read` / `create` / `update` / `delete`, granted
-  to owner, admin and (for read/create/update) security_admin. No `policy.execute`,
-  `policy.approve` or `policy.kill`: evaluation is a read, and no role may make a policy
-  act. Phase 6 left the matrix at 20 permissions / 63 grants; Phase 7 took it to
-  21 / 66 with `action.execute`.
-- **A documented dry run** — `POST .../policies/evaluate` reports the authorization
-  decision, the policy decision and the effective answer side by side, and performs no
-  action, records nothing and approves nothing.
-- **Migration `0005_policies`** — new head; two new tables with the tenant boundary in
-  the schema (composite foreign key), closed statuses, effects, targets and bounds as
-  `CHECK` constraints, and JSONB only for the structured condition array.
+- **One append-only table** — `aicore.audit_events`, with the tenant boundary, closed
+  vocabularies, server-generated `id` and `occurred_at`, and no `updated_at` at all.
+  `UPDATE`, `DELETE` and `TRUNCATE` are refused by database triggers; the single
+  exception is a transaction-local, greppable override that permits deletion only, and
+  Phase 8 has no retention policy to use it.
+- **One internal writer** — `AuditWriter`, reached through the Phase 3 event seam
+  (`emit_event(..., session=session)`). The organization, the person and the membership
+  are resolved from the authorized request context, never from a body; an operation
+  nobody performed is recorded with no actor rather than a fabricated one.
+- **A closed vocabulary with real emit sites** — inventory, agent registry, policy record,
+  ingestion and the whole action pipeline. The four axes stay separate: `event_type`
+  (what happened), `action` (which operation), `decision` (what was decided) and
+  `outcome` (how it ended), reusing Phase 7's vocabulary (`allow` + `success`,
+  `deny` + `blocked`, `require_approval` + `not_executed`).
+- **Phase 7 integration** — an admitted execution is recorded *before* anything can run
+  (fail-closed), the decision is recorded once, naming the layer that produced it, and
+  the ending is recorded after the adapter has acted (best-effort, so a failure to write
+  can never turn a completed execution into a reported failure). The recording never
+  lets a `DENY` execute and never changes decision precedence.
+- **Metadata security** — a bounded, flat, sanitized summary. Credential-shaped keys and
+  values are redacted, nested or oversized documents are refused, and action arguments
+  are never stored: an execution records that it had `N` arguments, not what they were.
+- **A read-only query API** — `GET /organizations/{id}/audit-events`, guarded by the
+  existing `audit.read`, with twelve filters, mandatory bounded pagination and
+  deterministic `occurred_at DESC, id DESC` ordering. Foreign organizations answer
+  exactly like missing ones.
+- **No new permission and no matrix change** — `audit.read` (owner, security_admin) was
+  declared in Phase 2 for this purpose. There is no `audit.update`, `audit.delete` or
+  `audit.write`; a permission to change history would defeat the point of keeping it.
+- **Migration `0007_audit_events`** — the table, its constraints, six indexes and the
+  append-only trigger function, and nothing else. No earlier table is touched.
 
-Design, condition language, precedence and boundaries:
-[docs/policies.md](docs/policies.md).
+**The audit trail is not the execution ledger, and it is not a monitoring system.** The
+Phase 7 `action_executions` table is an idempotency mechanism and forgets refusals; the
+audit trail records them and has no key. And a record is not a control: there is no
+anomaly detection, no baseline, no dashboard, no alerting, no incident response and no
+containment. A hash chain is deliberately deferred, because a recomputable one would
+look like evidence while proving nothing — see [docs/audit.md](docs/audit.md).
+
+Design, event model, metadata boundary, append-only semantics and limitations:
+[docs/audit.md](docs/audit.md).
 
 ## What Phase 7 adds
 
@@ -287,6 +312,44 @@ authorized, evaluated against the organization's policies and decided — and on
 
 Design, request model, decision flow and security guarantees:
 [docs/actions.md](docs/actions.md).
+
+## What Phase 6 adds
+
+The **context-aware policy engine**: a way for an organization to record what it
+decides about an action in a given situation, and a deterministic evaluator that turns
+those records into a decision — without ever replacing the authorization layer.
+
+- **Policy definitions, org-scoped** — `resource.action` from the permission catalogue,
+  an effect (`allow` / `deny` / `require_approval`), a priority, a status and a list of
+  conditions. One tenant per policy; there is no global or shared policy.
+- **A closed condition language** — nine fields with typed values and closed sets, and
+  eight operators. No expressions, no user code, no `eval()`, no policy-authored SQL,
+  no `OR`, no nesting. A value that does not fit its field is refused before the policy
+  is stored, and an invalid stored definition cannot be activated.
+- **A deterministic evaluator** — `deny` beats `require_approval` beats `allow`,
+  then priority, then name and id, and never the order rows arrived in. The engine is a
+  pure function of its arguments: no clock, no database, no network, no model call,
+  asserted structurally.
+- **A policy can only restrict** — the effective answer is the authorization decision
+  *and* the policy decision, so a Phase 5 denial can never become a permit, and missing
+  context never reads as "allowed".
+- **Versioned history** — editing a definition appends a version and never rewrites
+  one, so a decision that names a version stays explainable. Labels and rationale are
+  not versions; an edit that changes nothing is not a version either.
+- **Four policy permissions** — `policy.read` / `create` / `update` / `delete`, granted
+  to owner, admin and (for read/create/update) security_admin. No `policy.execute`,
+  `policy.approve` or `policy.kill`: evaluation is a read, and no role may make a policy
+  act. Phase 6 left the matrix at 20 permissions / 63 grants; Phase 7 took it to
+  21 / 66 with `action.execute`.
+- **A documented dry run** — `POST .../policies/evaluate` reports the authorization
+  decision, the policy decision and the effective answer side by side, and performs no
+  action, records nothing and approves nothing.
+- **Migration `0005_policies`** — new head; two new tables with the tenant boundary in
+  the schema (composite foreign key), closed statuses, effects, targets and bounds as
+  `CHECK` constraints, and JSONB only for the structured condition array.
+
+Design, condition language, precedence and boundaries:
+[docs/policies.md](docs/policies.md).
 
 ## What Phase 5 adds
 
@@ -387,8 +450,9 @@ each thing.
   the normalise → validate → ownership → record path a future integration calls.
   No cloud or network integration ships, and nothing claims otherwise.
 - **Audit readiness** — inventory changes emit domain events
-  (`asset.created`, `asset.updated`, `asset.deleted`, `asset.discovered`) through
-  one boundary. No audit system is implemented; the events are hooks, not records.
+  (`asset.created`, `asset.updated`, `asset.deleted`, `asset.discovered`) through one
+  boundary. Phase 8 attached the audit trail to it: an event with a session is a durable
+  row as well as a log line, which is exactly the hook this phase left.
 
 Design, API usage and current limitations: [docs/inventory.md](docs/inventory.md).
 
@@ -457,8 +521,10 @@ Design and rationale: [docs/database.md](docs/database.md).
    policy and the firewall all allow it, and only through an adapter. Approvals and
    the kill switch are still to come — they are the remaining places a policy
    decision would be carried out.
-4. Monitoring: behaviour, anomalies, cost, audit, incidents (making `audit.read`
-   and `security.read` mean something).
+4. Monitoring and response: behaviour, anomalies, cost, incidents, approvals and the
+   kill switch (making `security.read` mean something, and turning the audit trail from
+   a record into something that is read automatically). ``audit.read`` guards the trail
+   since **Phase 8**.
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic
    decisions.
 

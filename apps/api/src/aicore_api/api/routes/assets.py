@@ -336,8 +336,10 @@ def create_asset(
             resource_type="asset",
             resource_id=asset.id,
             actor_membership_id=context.membership.id,
+            actor_id=context.user_id,
             data={"asset_type": asset.asset_type, "discovery_state": asset.discovery_state},
-        )
+        ),
+        session=session,
     )
     return _asset_read(asset)
 
@@ -464,8 +466,10 @@ def update_asset(
                 resource_type="asset",
                 resource_id=asset.id,
                 actor_membership_id=context.membership.id,
+                actor_id=context.user_id,
                 data={"fields": sorted(changed)},
-            )
+            ),
+            session=session,
         )
     return _asset_read(asset)
 
@@ -495,14 +499,22 @@ def delete_asset(asset_id: uuid.UUID, context: DeleteAssets, session: SessionDep
     require_instance_scope(
         context, asset, permission=Permission.ASSET_DELETE, detail=_ASSET_NOT_FOUND
     )
+    # The identifiers are read before the row goes, and the event is written *after* the
+    # delete commits. That order matters for the audit trail in a way it did not for a log
+    # line: an event is a claim that something happened, and writing it first would leave a
+    # record of a deletion that might then fail. The asset is already captured here, so the
+    # trail still names what was removed.
+    asset_type = asset.asset_type
+    repository.delete(asset)
     emit_event(
         DomainEvent(
             name=ASSET_DELETED,
             organization_id=context.organization_id,
             resource_type="asset",
-            resource_id=asset.id,
+            resource_id=asset_id,
             actor_membership_id=context.membership.id,
-            data={"asset_type": asset.asset_type},
-        )
+            actor_id=context.user_id,
+            data={"asset_type": asset_type},
+        ),
+        session=session,
     )
-    repository.delete(asset)

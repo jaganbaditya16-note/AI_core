@@ -333,9 +333,11 @@ An organization can see its own agents and nothing else:
 Registration, update and deletion emit domain events
 (`agent.registered`, `agent.updated`, `agent.deleted`, plus `asset.created` /
 `asset.deleted` when the registration also created or removed the inventory
-record). This is the same seam Phase 3 established: a place a later audit phase
-attaches to, not an audit system. There is no history table — an update overwrites
-the previous value.
+record). This is the same seam Phase 3 established, and Phase 8 attached to it: those
+events are audit rows as well as log lines now — see [audit.md](audit.md). What the
+registry still does not keep is *history*: an update overwrites the previous value, and
+the trail records that a change happened and which fields moved, not what they were
+before.
 
 ## Verification
 
@@ -380,7 +382,8 @@ Stated plainly, because a registry that overstates itself is worse than a small 
 - **No credential storage of any kind.** Not even hashed: the registry stores no
   secret material, so there is nothing to leak.
 - **No history.** A version change or a lifecycle change overwrites the previous
-  value; the event seam exists, the audit trail does not.
+  value. The Phase 8 trail records the change, not a revision of it: a registry row has
+  no past versions to read back.
 - **No bulk operations.** One agent per request.
 - **No dashboard.** The registry is an API; the only client-side artifact in this
   phase is the shared TypeScript contract in `packages/types`.

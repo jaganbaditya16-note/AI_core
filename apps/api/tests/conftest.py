@@ -44,6 +44,7 @@ from aicore_api.db.base import APP_SCHEMA  # noqa: E402
 from aicore_api.db.session import dispose_engine  # noqa: E402
 from aicore_api.main import create_app  # noqa: E402
 from assets_fixture import AssetFactory  # noqa: E402
+from audit_fixture import AuditFactory, AuditScene  # noqa: E402
 from identity_fixture import Identity, IdentityFactory  # noqa: E402
 from policies_fixture import PolicyFactory  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
@@ -299,6 +300,61 @@ def actions(
         # Before the identity purge, which happens after this fixture: a ledger row
         # references its organization with RESTRICT.
         factory.purge()
+
+
+@pytest.fixture
+def audit(
+    authenticate, owner_identity: Identity, integration_engine: Engine
+) -> Iterator[AuditScene]:
+    """An owner of a fresh tenant, and everything that acts inside it.
+
+    Phase 8's mirror of the ``assets``/``agents``/``policies``/``actions`` fixtures,
+    bundled: the trail is a record *of* those operations, so a test needs both the
+    operations and the record in one tenant, under one credential, on one client. It
+    writes nothing itself — the factories write their own subjects, and the tests read
+    what the platform recorded about them, both through the API and from the raw table.
+    """
+    client = authenticate(owner_identity)
+    identity = owner_identity
+    trail = AuditFactory(
+        client=client,
+        organization_id=identity.organization_id,
+        engine=integration_engine,
+        token=identity.token,
+    )
+    scene = AuditScene(
+        identity=identity,
+        trail=trail,
+        assets=AssetFactory(
+            client=client,
+            organization_id=identity.organization_id,
+            engine=integration_engine,
+        ),
+        agents=AgentFactory(
+            client=client,
+            organization_id=identity.organization_id,
+            engine=integration_engine,
+        ),
+        policies=PolicyFactory(
+            client=client,
+            organization_id=identity.organization_id,
+            engine=integration_engine,
+            token=identity.token,
+        ),
+        actions=ActionFactory(
+            client=client,
+            organization_id=identity.organization_id,
+            engine=integration_engine,
+            token=identity.token,
+        ),
+    )
+    try:
+        yield scene
+    finally:
+        # Before the identity purge, which happens after this fixture: the resources and
+        # the trail reference their organization with RESTRICT, and the trail only
+        # deletes under the override the fixture names.
+        scene.purge()
 
 
 @pytest.fixture

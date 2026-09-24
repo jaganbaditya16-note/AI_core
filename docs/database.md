@@ -341,8 +341,42 @@ unscoped statement is refused before it reaches PostgreSQL.
 **This table is not an audit trail**, and the schema is the proof: there is no
 actor, no rationale, no role, no decision history and no row for a refusal. An action
 that was denied, or that required an approval, leaves nothing here, because nothing
-happened. What happened, for whom, whether it was allowed and what it changed is the
-audit system a later phase owns — see [actions.md](actions.md).
+happened. What happened, for whom, whether it was allowed and what it changed is
+`audit_events`, which Phase 8 added — a separate table with separate columns, written by
+a separate writer, and neither is a substitute for the other — see
+[audit.md](audit.md).
+
+## The audit trail table (Phase 8)
+
+`aicore.audit_events` holds one row per security-relevant event, in the organization it
+happened to. It is the *record* of what the deterministic layers decided and what the
+platform then did; it decides nothing itself. `docs/audit.md` is the full reference, and
+this section is the schema half of it.
+
+| Constraint | Why |
+|---|---|
+| `ck_audit_events_event_type_valid`, `…_actor_type_valid`, `…_resource_type_valid`, `…_decision_valid`, `…_outcome_valid`, `…_source_valid`, `…_schema_version_valid` | Every closed vocabulary is a `CHECK`, so a value the application cannot produce cannot be stored by a data fix either |
+| `ck_audit_events_actor_named`, `…_actor_membership_named` | A `human` row names both the person and the membership; a `system` row names neither. Partial or invented attribution is unrepresentable |
+| `ck_audit_events_source_request_consistent` | `source = 'api'` requires a request id, and an internal row must not carry one: "this came from a request" is a fact, not a label |
+| `ck_audit_events_pending_consistent` | `outcome = 'pending'` belongs to `action.requested` alone, in both directions |
+| `ck_audit_events_correlation_id_shape`, `…_request_id_shape`, `…_action_shape` | The identifiers are checked against the same allow-lists the request layer applies |
+| `ck_audit_events_metadata_is_object`, `…_metadata_bounded` | The summary is a JSON object and bounded in the schema as well as at the boundary |
+| `resource_id` **has no foreign key** | A trail describes a resource that may since have been deleted — that is the point of keeping it |
+| `organization_id` → `organizations` (**RESTRICT**) | As everywhere: removing a tenant is an operational procedure, never a side effect of a `DELETE` |
+
+Two triggers — row-level for `UPDATE`/`DELETE`, statement-level for `TRUNCATE` — call one
+function that raises `RestrictViolation` unless the transaction has explicitly asked for
+an exception with `SET LOCAL aicore.audit_retention = '<reason>'`. `UPDATE` is refused
+even then. The audit trail is the one table in this schema the database itself will not
+let anyone rewrite; `docs/audit.md` states the one exception, why it exists and what is
+deliberately absent (a hash chain, and any retention policy).
+
+The table has no `updated_at`, unlike every other table here: `TimestampMixin` is absent
+on purpose, and its absence is the schema's own statement that a row is written once.
+
+`audit_events` inherits `TenantOwnedMixin`, so the tenancy guard covers it exactly as it
+covers the inventory, the registry, the policies and the ledger: an unscoped statement is
+refused before PostgreSQL sees it.
 
 ## Migrations
 
@@ -360,6 +394,7 @@ database/migrations/versions/
   0004_agents.py                # Phase 4: the agent registry + the four agent permissions
   0005_policies.py              # Phase 6: the policy record + the four policy permissions
   0006_action_firewall.py       # Phase 7: the idempotency ledger + action.execute and its target
+  0007_audit_events.py          # Phase 8: the append-only audit trail + its guard triggers
 ```
 
 ```bash
@@ -413,6 +448,10 @@ bash scripts/test-db.sh     # real PostgreSQL: migrate from scratch, drift check
 | `test_actions.py` | the action catalogue and the request model: identifiers, closed sensitivity vocabulary, adapter bindings, argument schemas, and that nothing echoes the arguments it carries |
 | `test_action_firewall.py` | the decision matrix over both upstream layers, every refusal, the fail-closed configuration errors, purity, and a structural scan proving the enforcement path cannot reach a process, a file, a socket or an import |
 | `test_action_execution.py` | only `ALLOW` reaches an adapter (counted with a recording adapter), exactly-once behaviour, idempotency replay and conflict, and the ledger's constraints against real PostgreSQL |
+| `test_audit.py` | the event model: the four axes and their vocabularies, default attribution, per-event rules, the metadata boundary, and that the writer cannot be reached from outside the package |
+| `test_audit_immutability.py` | the append-only guarantee against real PostgreSQL: `UPDATE`, `DELETE` and `TRUNCATE` refused, the retention override honoured for `DELETE` only, every vocabulary and shape `CHECK` enforced by the database, and no mutation surface anywhere in the repository or the routes |
+| `test_audit_api.py` | the query surface: recorded fields, ordering and pagination, every filter, tenant isolation over HTTP, the authorization matrix, write attempts, malformed input and redaction |
+| `test_audit_integration.py` | the Phase 5–7 seam: every pipeline outcome recorded once, the adapter's call count unchanged by auditing, and a `DENY` that stays a `DENY` |
 | `test_actions_api.py` | the execute endpoint over HTTP: CASE A–G with call counts, every published error, tenant isolation and IDOR, injection-shaped input, the closed request body, secret hygiene, and that exactly one route can reach an adapter |
 | `test_cli.py` | the provisioning CLI produces a token that authenticates over HTTP |
 

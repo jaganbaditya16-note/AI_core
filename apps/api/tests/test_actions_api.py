@@ -48,6 +48,7 @@ from aicore_api.core.executors import (
     AgentRegistryExecutor,
 )
 from aicore_api.core.permissions import Permission
+from aicore_api.db.models.action_execution import ActionExecution
 from aicore_api.db.models.membership import MembershipStatus
 from aicore_api.main import create_app
 from identity_fixture import Identity, IdentityFactory
@@ -832,22 +833,49 @@ def test_the_ledger_row_holds_the_outcome_and_no_credential(
     assert set(row["outcome"]) == {"summary", "findings", "details", "adapter", "digest"}
 
 
-def test_the_ledger_is_not_an_audit_trail(actions: ActionFactory, agents: AgentFactory) -> None:
+def test_the_ledger_records_no_actor_and_no_refusal(
+    actions: ActionFactory, agents: AgentFactory
+) -> None:
     """The phase's explicit non-goal, asserted rather than promised.
 
     A refusal writes nothing at all, and an execution writes one row that says what ran
-    and what it reported. There is no record of who was refused, why, or by which policy
-    — that system is a later phase, and this build does not pretend to have it.
+    and what it reported. The ledger answers "did this run twice?"; it does not answer
+    "who was refused, why, or by which policy". That history is the audit trail — a
+    different table, written by a different writer, reached through a read-only surface.
     """
     target_id = _registered_agent(agents)
     actions.execute(uuid.uuid4())  # a refusal
-    actions.executed(target_id)  # one execution
 
+    # Nothing at all: a refused request is not an execution and leaves no execution row.
+    assert actions.count_executions() == 0
+
+    actions.executed(target_id)  # one execution
     assert actions.count_executions() == 1
 
-    paths = set(create_app().openapi()["paths"])
-    for forbidden in ("audit", "event", "incident", "monitor", "alert", "webhook"):
+    # The row is an execution mechanism, and its columns say so: nothing names a person,
+    # an authorization decision, a policy, a correlation or a body of metadata.
+    columns = set(ActionExecution.__table__.columns.keys())
+    assert not columns & {"actor_id", "actor_type", "decision", "policy_id", "correlation_id"}
+    assert "metadata" not in columns
+
+    # Nothing later in this project is being pretended at either: no incident,
+    # monitoring, alerting or webhook surface exists in this build.
+    routes = [
+        context.original_route
+        for context in iter_route_contexts(create_app().routes)
+        if isinstance(context.original_route, APIRoute)
+    ]
+    paths = [route.path for route in routes]
+    for forbidden in ("incident", "monitor", "alert", "webhook"):
         assert not [path for path in paths if forbidden in path.lower()], forbidden
+
+    # And the trail itself is read-only: one path, and it accepts GET alone, so nothing
+    # in the API can create an event or alter one.
+    audit_routes = [route for route in routes if "audit" in route.path.lower()]
+    assert [route.path for route in audit_routes] == [
+        "/organizations/{organization_id}/audit-events"
+    ]
+    assert sorted(audit_routes[0].methods or []) == ["GET"]
 
 
 # ── Security: the execution path is the only one that reaches an adapter ─────

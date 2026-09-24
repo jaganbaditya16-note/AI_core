@@ -4,11 +4,14 @@
  * The published surface covers exactly what the API serves: health endpoints,
  * the common error envelope, the organization (tenant) contract, the identity
  * contract (who the caller is, which organizations they belong to, what role they
- * hold and what it grants), and — since Phase 3 — the AI asset inventory.
+ * hold and what it grants), the AI asset inventory, the agent registry, the policy
+ * engine, the action firewall, and — since Phase 8 — the audit trail.
  *
- * Domain contracts for policy, the action firewall, audit records and incidents
- * are intentionally NOT defined: those phases are not implemented, and a type
- * published now would be a promise this build does not keep.
+ * Domain contracts for incidents and everything after them are intentionally NOT
+ * defined: those phases are not implemented, and a type published now would be a
+ * promise this build does not keep. Neither is a write model for the audit trail,
+ * because reading is the only client operation there: the platform records events,
+ * a caller only queries them.
  *
  * These types mirror the Pydantic models in `apps/api/src/aicore_api/schemas/`.
  * A backend test (`tests/test_openapi_contract.py`) asserts the two stay aligned.
@@ -673,6 +676,150 @@ export interface ActionExecutionResponse {
   correlation_id: string;
   executed_at: string;
   result: ActionOutcome;
+}
+
+/* ── The audit trail (Phase 8) ─────────────────────────────────────────── */
+
+/**
+ * Everything the trail may record, and nothing else.
+ *
+ * The names are stable identifiers in a durable table: `asset.created` is not a
+ * display string, it is what a future reader filters on. The action pipeline
+ * contributes six, because one request passes through six distinguishable states
+ * worth remembering — it was admitted, it was refused, it was held for an approval
+ * this build cannot grant, it ran, it was answered from the ledger instead of
+ * running again, or it was admitted and failed.
+ *
+ * `asset.discovered` is the ingestion path's event: an integration reported
+ * something, which is a system origin rather than a request.
+ */
+export type AuditEventType =
+  | "asset.created"
+  | "asset.updated"
+  | "asset.deleted"
+  | "asset.discovered"
+  | "agent.registered"
+  | "agent.updated"
+  | "agent.deleted"
+  | "policy.created"
+  | "policy.updated"
+  | "policy.version_published"
+  | "policy.status_changed"
+  | "policy.deleted"
+  | "action.requested"
+  | "action.denied"
+  | "action.require_approval"
+  | "action.executed"
+  | "action.replayed"
+  | "action.failed";
+
+/** The kind of row an event is about. Closed, like every other vocabulary here. */
+export type AuditResourceType = "asset" | "agent" | "policy";
+
+/**
+ * Who initiated the event.
+ *
+ * `human` is an authenticated caller; the person and the membership are resolved by
+ * the server from the credential, never from the request. `system` is an operation
+ * nobody performed — the ingestion path recording what an integration reported.
+ * There is no `agent` actor: an execution attributed to an agent is still a human's
+ * request, and the agent appears in `agent_id` instead of being given an identity it
+ * does not have.
+ */
+export type ActorType = "human" | "system";
+
+/** Where the event originated. A worker or a scheduler adds its own value later. */
+export type AuditSource = "api" | "ingestion";
+
+/**
+ * The decision recorded, in the vocabulary the policy engine and the firewall
+ * already publish (`FirewallOutcome`). Null when no decision applies: a system
+ * operation answers to no authorization layer, and a request that has only been
+ * admitted has not been decided yet.
+ */
+export type AuditDecision = "allow" | "deny" | "require_approval";
+
+/**
+ * What became of the event.
+ *
+ * `pending` exists for exactly one event type — an admitted execution request, whose
+ * ending is unknown when the row is written and may never be known. `replayed` is
+ * kept apart from `success` on purpose: a request answered from the ledger is not a
+ * second execution, and a trail that called it one would overstate what the system
+ * did.
+ */
+export type AuditOutcome =
+  | "success"
+  | "failed"
+  | "blocked"
+  | "not_executed"
+  | "replayed"
+  | "pending";
+
+/**
+ * One recorded event — the mirror of `AuditEventRead`.
+ *
+ * Every field is named and typed rather than returned straight from the row, so
+ * adding a column to the table cannot silently publish it. The four axes stay
+ * separate: `event_type` is what happened, `action` is which operation, `decision`
+ * is what was decided, `outcome` is how it ended.
+ *
+ * Nothing here can be claimed by a client. `organization_id`, the actor, the
+ * timestamps and the correlation are resolved by the server; there is no request
+ * shape in this file, because there is no write endpoint to send one to.
+ */
+export interface AuditEvent {
+  id: string;
+  organization_id: string;
+  event_type: AuditEventType;
+  /** The shape of the row this event was written in. */
+  schema_version: number;
+  /** The server's clock at the moment of the event, in UTC. */
+  occurred_at: string;
+  actor_type: ActorType;
+  /** The authenticated person; null for a system event. */
+  actor_id: string | null;
+  /** The membership that carried the role; null for a system event. */
+  actor_membership_id: string | null;
+  /** The agent an execution was attributed to, when the request named one. */
+  agent_id: string | null;
+  resource_type: AuditResourceType;
+  /** The row the event was about, as it was; null when it is not about one. */
+  resource_id: string | null;
+  /**
+   * The operation: the registered action's identifier for an execution, or the
+   * `resource.action` permission for a lifecycle change.
+   */
+  action: string | null;
+  decision: AuditDecision | null;
+  outcome: AuditOutcome;
+  /** Groups the events of one flow; server-established, never client-claimed. */
+  correlation_id: string;
+  /** The originating HTTP request; null for an internal path such as ingestion. */
+  request_id: string | null;
+  source: AuditSource;
+  /**
+   * Sanitized summary facts. Credential-shaped keys and values are redacted at the
+   * write boundary and again on the way out, and action arguments are never stored:
+   * an execution records that it carried N arguments, not what they were.
+   */
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * `GET /organizations/{organization_id}/audit-events`.
+ *
+ * Ordered `occurred_at DESC, id DESC`, always paginated: `limit` is bounded and
+ * `offset` is capped, so no query can ask for the whole trail. `total` is present
+ * only when the caller asked for it; `count` always describes the page itself.
+ */
+export interface AuditEventListResponse {
+  organization_id: string;
+  items: AuditEvent[];
+  limit: number;
+  offset: number;
+  count: number;
+  total: number | null;
 }
 
 /* ── Errors ──────────────────────────────────────────────────────────────── */

@@ -88,6 +88,11 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     # run registered actions here?) is one question, and the contextual one (should this
     # action, on this target, run?) is Phase 6's, through a policy on this target.
     ("POST", "/organizations/{organization_id}/actions/execute"): {Permission.ACTION_EXECUTE},
+    # The trail is a read, guarded by the permission Phase 2 declared for it. Phase 8
+    # added no capability to the vocabulary: the owner and the security administrator
+    # already held ``audit.read``, and the administrator deliberately does not — oversight
+    # is not administration.
+    ("GET", "/organizations/{organization_id}/audit-events"): {Permission.AUDIT_READ},
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)

@@ -103,8 +103,9 @@ idempotently on `(organization_id, asset_type, external_identifier)`. No cloud o
 network integration exists, and the API says so.
 
 Inventory changes emit domain events (`aicore_api/core/events.py`) at the four
-points worth auditing later. That is a seam for Phase 8, not an audit system, and
-it is the reason the later phase has one boundary to attach to.
+points worth auditing. That was a seam for Phase 8, and Phase 8 attached to it: the
+same call with a session writes the audit row that records the change. A migration or a
+data fix still gets only the log line, because there is nothing to attribute it to.
 
 Design, API usage and current limitations: [inventory.md](inventory.md).
 
@@ -150,8 +151,8 @@ agent, and no permission claims to: there is no `agent.execute`, `agent.suspend`
 namespace contains exactly the four registry permissions.
 
 Registry changes emit domain events (`agent.registered`, `agent.updated`,
-`agent.deleted`, plus the inventory events a registration also performs), the same
-seam Phase 3 opened for a later audit phase.
+`agent.deleted`, plus the inventory events a registration also performs), the same seam
+Phase 3 opened. Phase 8 records them as audit events alongside the log line.
 
 Identity model, lifecycle, API usage and current limitations:
 [agents.md](agents.md).

@@ -241,9 +241,12 @@ the status, the pointer to the current version) and its **definition**
 - A decision names `policy_id` **and** `policy_version`, so the definition a recorded
   decision was made from can still be read back, exactly as it was.
 
-There is no audit system here: no decision log, no event stream of evaluations, no
-history retention policy. The version history is what makes a decision attributable, and
-that is all this phase claims.
+There is no decision log here: the engine writes no row per evaluation and has no
+retention policy of its own. What makes a decision attributable is still the version
+history, and that is all this phase claims. Phase 8 records an outcome only when a
+decision is acted on — an execution, a denial or an approval requirement becomes a
+single audit event whose metadata names the reason and the policy decision — never a
+stream of evaluations; see [audit.md](audit.md).
 
 ## Evaluation context
 

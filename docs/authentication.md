@@ -237,9 +237,13 @@ Stated here so the boundary is as visible as the implementation:
   and registering an agent is not the same capability as running one;
 - **no PostgreSQL Row Level Security** — the design is documented and the schema
   is prepared for it, but it is not enabled (see [database.md](database.md));
-- **no audit records** — `audit.read` is a permission whose subject arrives in a
-  later phase. Authorization decisions are logged as structured request logs, not
-  as an audit trail this phase does not have.
+- **no authentication events in the audit trail** — `audit.read` guards the Phase 8
+  trail, which records what an *authenticated* caller did; a refusal of their request
+  by a later layer is recorded there. A failed credential is deliberately not an event:
+  no credential means no user, no membership and no verified organization, so an
+  attempt could only be recorded against a tenant the caller never proved they belonged
+  to. Those failures stay structured request log lines, and the endpoint that produced
+  one is not an existence oracle — see [audit.md](audit.md).
 
 ## Local testing
 

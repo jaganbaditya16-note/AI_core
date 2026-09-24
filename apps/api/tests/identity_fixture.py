@@ -30,11 +30,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
+from aicore_api.db.models.audit_event import AuditEvent
 from aicore_api.db.models.membership import Membership, MembershipStatus
 from aicore_api.db.models.organization import Organization
 from aicore_api.db.models.policy import Policy
 from aicore_api.db.models.user import User, UserStatus
 from aicore_api.db.repositories.api_tokens import ApiTokenRepository
+from aicore_api.db.repositories.audit_events import audit_retention_override
 from aicore_api.db.repositories.memberships import MembershipRepository
 from aicore_api.db.repositories.organizations import OrganizationRepository
 from aicore_api.db.repositories.users import UserRepository
@@ -333,9 +335,10 @@ def purge_identities(engine: Engine, identities: Iterable[Identity]) -> None:
     Deliberately *not* reverse-creation order: once one person can belong to an
     organization that another fixture created, "newest first" is not enough — the
     older tenant would still be referenced by the newer person's membership, and
-    the foreign key (correctly) refuses the delete. So: every credential, then
-    every owned resource, then every membership, then the organizations, then the
-    people. Each phase is one statement per row, all committed together.
+    the foreign key (correctly) refuses the delete. So: every credential, then the
+    audit trail (which only an explicit override may delete), then every owned
+    resource, then every membership, then the organizations, then the people. Each
+    phase is one statement per row, all committed together.
     """
     identities = list(identities)
     with _session(engine) as session:
@@ -350,6 +353,22 @@ def purge_identities(engine: Engine, identities: Iterable[Identity]) -> None:
                 session.execute(
                     delete(Asset).where(Asset.organization_id == identity.organization_id)
                 )
+
+        for identity in identities:
+            # The audit trail goes first of all, because it is the one table that refuses
+            # to be deleted. A fixture that removes a tenant must remove its events too (the
+            # tenant foreign key is RESTRICT), and the override states out loud that this is
+            # teardown rather than a retention policy — which is the only reason the guard
+            # has an exception at all.
+            with audit_retention_override(session, "test fixture teardown"):
+                for identity in identities:
+                    for organization_id, _membership_id in identity.memberships():
+                        with bind_tenant(organization_id):
+                            session.execute(
+                                delete(AuditEvent).where(
+                                    AuditEvent.organization_id == organization_id
+                                )
+                            )
 
         for identity in identities:
             # Policies go with the inventory, and for the same reason: a policy

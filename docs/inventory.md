@@ -328,15 +328,14 @@ back, without this module deciding for it.
 
 ## Audit readiness
 
-Phase 3 does not build the audit system (Phase 8), and it does not add a second,
-competing one. It does emit domain events at the four points where an inventory
-change is worth auditing later — `asset.created`, `asset.updated`, `asset.deleted`
-and `asset.discovered` — through `aicore_api.core.events`, which today writes one
-structured log line per event and records nothing else.
-
-That gives the later audit phase a single boundary to attach to, and it keeps the
-promise honest now: an event is a hook, not a record. Nothing in this phase claims
-that asset changes are audited.
+Phase 3 did not build the audit system, and it deliberately did not add a second,
+competing one. It emits domain events at the four points where an inventory change is
+worth auditing — `asset.created`, `asset.updated`, `asset.deleted` and
+`asset.discovered` — through `aicore_api.core.events`. Phase 8 attached to exactly that
+boundary: with a session, the same call writes one log line *and* one durable audit row,
+so inventory changes are recorded without a second write path — see
+[audit.md](audit.md). An event is still a hook rather than a record when there is nobody
+to attribute it to: a migration or a data fix gets the log line alone.
 
 ## Verification
 
@@ -372,7 +371,8 @@ one:
   change any system. There is no policy, firewall, kill switch or monitor.
 - **Risk classification is storage.** Five values, no scoring, no engine.
 - **No history.** An update overwrites the previous value; there is no revision
-  table and no audit record (that is Phase 8).
+  table. The Phase 8 trail records that the change happened and which fields moved, not
+  the value that was replaced.
 - **No dependency graph.** Assets do not reference each other yet. The one
   extension that does exist is the agent registry: an `agent` asset can carry a
   Phase 4 registry record with a stable identity, listed in

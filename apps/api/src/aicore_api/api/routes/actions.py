@@ -27,23 +27,38 @@ the handler:
 8. **the firewall decides** — one typed outcome, from both layers;
 9. **and only an ``ALLOW`` reaches an adapter**, through
    :class:`~aicore_api.core.execution.ActionExecutionService`, which re-checks that
-   outcome rather than trusting this handler.
+   outcome rather than trusting this handler;
+10. **the trail records what happened**, at three points that are deliberately not four:
+   the request once it has resolved a registered action, the *decision* once — a refusal
+   is one event naming the layer that refused, not one event per layer that could have —
+   and the ending (executed, replayed or failed).
 
 A decision that is not ``ALLOW`` is answered with the error envelope and a code that
-names the reason, and nothing is executed — no adapter call, no ledger row, no event.
-An executed request answers 200 with the adapter's report, the decisions that produced
-it, and the identifiers a retry needs.
+names the reason, and nothing is executed — no adapter call, no ledger row. An executed
+request answers 200 with the adapter's report, the decisions that produced it, and the
+identifiers a retry needs.
+
+The audit writes are ordered by what they claim. The one that says "this request was
+admitted" is written *before* anything can run, and a failure to record it fails the
+request: an execution nobody can account for is worse than an execution that did not
+happen. The ones written afterwards describe something that has already occurred, so they
+cannot be allowed to change what the caller is told — they are attempted, and a failure
+is logged loudly rather than converted into a false report about what the system did. The
+firewall is unaffected either way: it has already decided, and no audit path can turn a
+refusal into an execution.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from aicore_api.api.deps import ActionExecutorRegistryDep, ActionRegistryDep
+from aicore_api.api.deps import ActionExecutorRegistryDep, ActionRegistryDep, AuditWriterDep
 from aicore_api.api.routes.policies import _decision_read, _effective_read
+from aicore_api.audit.writer import AuditWriter
 from aicore_api.auth.authorization import (
     AuthorizationDecision,
     OrganizationContext,
@@ -58,6 +73,12 @@ from aicore_api.core.actions import (
     ActionRequest,
     ActionTarget,
     UnknownActionError,
+)
+from aicore_api.core.audit import (
+    AuditDecision,
+    AuditEventType,
+    AuditOutcome,
+    AuditResourceType,
 )
 from aicore_api.core.errors import ApiError
 from aicore_api.core.execution import (
@@ -89,6 +110,8 @@ from aicore_api.schemas.actions import (
     FirewallDecisionRead,
 )
 from aicore_api.schemas.policies import AuthorizationDecisionRead
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/organizations", tags=["actions"])
 
@@ -276,6 +299,139 @@ def _refusal(decision: FirewallDecision) -> ApiError:
     )
 
 
+def _decision_metadata(decision: FirewallDecision) -> dict[str, Any]:
+    """The facts a decision event carries: which layer decided, and why.
+
+    Deliberately not the caller's arguments, the target's contents or the policies that
+    matched: an event names the decision, and the row it is written against already names
+    the request. A trail that quoted what a caller sent would be a payload store with a
+    security-sounding name.
+    """
+    return {
+        "reason": decision.reason.value,
+        "firewall_outcome": decision.outcome.value,
+        "effective_reason": decision.effective_reason,
+        "policy_decision": decision.policy_decision,
+        "permission_required": decision.permission_required,
+        "principal_role": decision.principal_role or "unknown",
+    }
+
+
+def _record_decision(
+    trail: AuditWriter,
+    context: OrganizationContext,
+    request: ActionRequest,
+    decision: FirewallDecision,
+    *,
+    resource_type: AuditResourceType,
+) -> None:
+    """Record a refusal — once.
+
+    One event per refused request, whichever layer refused it: the firewall's reason names
+    the layer (``authorization_denied``, ``policy_denied``, ``target_not_found``,
+    ``environment_mismatch``, ``policy_requires_approval``), so an investigation reads *why*
+    from one row instead of correlating four. Emitting an event per layer that *could* have
+    refused is the duplication this phase explicitly rules out.
+
+    The write happens after the decision and cannot change it: the refusal is raised by the
+    caller regardless of what happens here, and a failure to record is logged rather than
+    converted into a different answer.
+    """
+    event_type = (
+        AuditEventType.ACTION_REQUIRE_APPROVAL
+        if decision.requires_approval
+        else AuditEventType.ACTION_DENIED
+    )
+    outcome = AuditOutcome.NOT_EXECUTED if decision.requires_approval else AuditOutcome.BLOCKED
+    metadata = _decision_metadata(decision)
+    metadata["idempotency_key"] = request.idempotency_key
+    _record_safely(
+        trail,
+        event_type,
+        context=context,
+        request=request,
+        resource_type=resource_type,
+        # The firewall's outcome vocabulary and the decision column's are the same three
+        # words (``allow`` / ``deny`` / ``require_approval``); ``test_audit.py`` asserts
+        # that they are, so a fourth firewall outcome cannot slip past this conversion
+        # without a test noticing.
+        decision=AuditDecision(decision.outcome.value),
+        outcome=outcome,
+        metadata=metadata,
+    )
+
+
+def _record_outcome(
+    trail: AuditWriter,
+    context: OrganizationContext,
+    request: ActionRequest,
+    decision: FirewallDecision,
+    *,
+    resource_type: AuditResourceType,
+    event_type: AuditEventType,
+    outcome: AuditOutcome,
+    metadata: dict[str, Any],
+) -> None:
+    """Record how an admitted action ended: executed, replayed or failed.
+
+    Only reached when the firewall said ``ALLOW``, so the decision column is ``allow``:
+    the row says both that it was permitted and what came of it, which is the pair a
+    security review asks about.
+    """
+    _record_safely(
+        trail,
+        event_type,
+        context=context,
+        request=request,
+        resource_type=resource_type,
+        decision=AuditDecision.ALLOW,
+        outcome=outcome,
+        metadata=metadata,
+    )
+
+
+def _record_safely(
+    trail: AuditWriter,
+    event_type: AuditEventType,
+    *,
+    context: OrganizationContext,
+    request: ActionRequest,
+    resource_type: AuditResourceType,
+    decision: AuditDecision,
+    outcome: AuditOutcome,
+    metadata: dict[str, Any],
+) -> None:
+    """Write one post-decision event, and never let the write change the answer.
+
+    By the time these run the decision is made and, for the outcome events, the adapter has
+    already acted. Raising here could only turn a completed execution into a reported
+    failure — which would be a lie about what happened, and an invitation to retry an
+    action that already ran. So the failure is logged at ERROR, where an operator will see
+    it, and the caller still gets the true answer. The trail is never *silently* short: a
+    missing row that nobody was told about is the failure mode this guards against.
+    """
+    try:
+        trail.record(
+            event_type,
+            context=context,
+            resource_type=resource_type,
+            resource_id=request.target_id,
+            agent_id=request.agent_id,
+            action=request.action_id,
+            decision=decision,
+            outcome=outcome,
+            correlation_id=request.correlation_id,
+            metadata=metadata,
+        )
+    except Exception:
+        logger.exception(
+            "the audit trail could not record %s for action %s in organization %s",
+            event_type.value,
+            request.action_id,
+            context.organization_id,
+        )
+
+
 def _read(
     *,
     context: OrganizationContext,
@@ -338,6 +494,7 @@ def execute_action(
     session: SessionDep,
     registry: ActionRegistryDep,
     executors: ActionExecutorRegistryDep,
+    trail: AuditWriterDep,
     payload: ActionExecuteRequest,
 ) -> ActionExecutionResponse:
     """Run one action from the registered catalogue, if — and only if — the firewall allows it.
@@ -389,6 +546,32 @@ def execute_action(
         )
     except ActionError as exc:
         raise ApiError(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_arguments", str(exc)) from exc
+
+    # What the trail calls the row this action addresses, taken from the definition rather
+    # than written here. A future action that addresses something the trail cannot name
+    # fails loudly at this line, which is the right place to find out.
+    trail_resource = AuditResourceType(definition.target_resource.value)
+
+    # 4b. The trail records that this request was admitted, *before* anything can run and
+    #     before any decision exists. It is the one audit write that fails the request if it
+    #     fails: an execution nobody can account for is worse than an execution that did not
+    #     happen, and refusing here executes nothing.
+    trail.record(
+        AuditEventType.ACTION_REQUESTED,
+        context=context,
+        resource_type=trail_resource,
+        resource_id=payload.target_id,
+        agent_id=payload.agent_id,
+        action=definition.action_id,
+        outcome=AuditOutcome.PENDING,
+        correlation_id=request.correlation_id,
+        metadata={
+            "sensitivity": definition.sensitivity.value,
+            "argument_count": len(payload.arguments or {}),
+            "environment": request.environment,
+            "attributed": payload.agent_id is not None,
+        },
+    )
 
     # 5. Phase 5, for this row: the existing service, asked about the permission this
     #    route enforces, with the instance dimension that reports ownership.
@@ -442,6 +625,7 @@ def execute_action(
         policy=effective,
     )
     if decision.outcome is not FirewallOutcome.ALLOW:
+        _record_decision(trail, context, request, decision, resource_type=trail_resource)
         raise _refusal(decision)
 
     # 9. Execution, through the service that re-checks the decision it is handed.
@@ -463,9 +647,56 @@ def execute_action(
             invoked_at=datetime.now(UTC),
         )
     except ExecutionFailedError as exc:
+        _record_outcome(
+            trail,
+            context,
+            request,
+            decision,
+            resource_type=trail_resource,
+            event_type=AuditEventType.ACTION_FAILED,
+            outcome=AuditOutcome.FAILED,
+            metadata={"error_code": "execution_failed", "idempotency_key": request.idempotency_key},
+        )
         raise ApiError(status.HTTP_500_INTERNAL_SERVER_ERROR, "execution_failed", str(exc)) from exc
     except IdempotencyConflictError as exc:
+        # A key reused for a different request, or a request still in progress: nothing ran.
+        # The refusal names itself in the response, and the trail records the ending — the
+        # request was admitted and did not run, which is exactly what ``failed`` means. An
+        # admission row with no ending would be a record that stops mid-sentence, and a
+        # reader could not tell it from a process that died.
+        _record_outcome(
+            trail,
+            context,
+            request,
+            decision,
+            resource_type=trail_resource,
+            event_type=AuditEventType.ACTION_FAILED,
+            outcome=AuditOutcome.FAILED,
+            metadata={
+                "error_code": "idempotency_conflict",
+                "idempotency_key": request.idempotency_key,
+            },
+        )
         raise ApiError(status.HTTP_409_CONFLICT, "idempotency_conflict", str(exc)) from exc
+
+    _record_outcome(
+        trail,
+        context,
+        request,
+        decision,
+        resource_type=trail_resource,
+        event_type=(
+            AuditEventType.ACTION_REPLAYED if result.replayed else AuditEventType.ACTION_EXECUTED
+        ),
+        outcome=AuditOutcome.REPLAYED if result.replayed else AuditOutcome.SUCCESS,
+        metadata={
+            "adapter": result.adapter,
+            "digest": result.digest,
+            "finding_count": len(result.outcome.findings),
+            "idempotency_key": request.idempotency_key,
+            "replayed": result.replayed,
+        },
+    )
 
     return _read(
         context=context,

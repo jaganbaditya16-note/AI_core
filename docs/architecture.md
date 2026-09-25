@@ -201,6 +201,37 @@ the boundary, because that is a deployment defect rather than a caller's mistake
 
 Design and limitations: [authorization.md](authorization.md).
 
+## What Phase 9 adds
+
+The layer above the record: monitoring counts what Phase 8 wrote, and the ordering of the
+layers is now complete from discovery to measurement.
+
+```
+DISCOVER → IDENTITY → PERMISSION → POLICY → ACTION FIREWALL → CONTROLLED EXECUTION
+                                      → AUDIT EVENT → MONITORING
+```
+
+Three modules, and the split is the argument: `core/monitoring.py` holds the vocabulary
+(the windows, the counter definitions, the bucket arithmetic and the rate calculation) as
+pure functions with no database, no clock and no request; `db/repositories/monitoring.py`
+turns those definitions into tenant-scoped, window-bounded SQL over `aicore.audit_events`;
+`monitoring/service.py` assembles what a caller receives. The routes are a translation from
+query parameters to a window and from those records to response models, and nothing else.
+
+The architectural decision worth recording is what the phase *did not* build. There is no
+second event system (a monitoring stream beside the trail would be a second account of the
+same activity, and two accounts eventually disagree), no duplicated execution records, no
+new table and no migration — the aggregates read the trail through the indexes Phase 8
+already built. What that buys is a measurement that cannot drift from the record it
+measures: a fact is derived from the trail, never written beside it.
+
+The boundary is as sharp as the ones below it. Monitoring cannot authorize, execute, modify
+a policy, change a permission or suspend an agent: it imports none of the code that could,
+its repository has no write method, and its queries are generated from counter tables rather
+than composed by hand. And it holds no verdict — no baseline, no threshold, no score, no
+severity and no notion of *normal*. Deciding whether a number is bad is a different subject
+with a different vocabulary, and it is a later phase's, not an extension of this one.
+
 ## What Phase 0 actually is
 
 A foundation: an application skeleton, a versioned API contract, a database
@@ -276,6 +307,7 @@ apps/api/src/aicore_api/
                   the permission catalog, asset vocabularies, domain events
   db/             engine/session factory, connectivity probe, models, repositories
   discovery/      the ingestion boundary a future integration calls (no integration)
+  monitoring/     measurement over the audit trail (Phase 9): assembly of the counters
   auth/           credentials → principal → organization context → permission check
   schemas/        Pydantic models = the published contract
 ```
@@ -325,6 +357,8 @@ modules; they do not reshape these boundaries.
    vocabulary, instance authorization. ~~Policy engine~~ — **Phase 6**, and
    ~~action firewall~~ — **Phase 7**: both are deterministic decisions built on it,
    and the firewall is the only place a decision is carried out.
-4. Audit, monitoring, anomalies, incidents.
+4. ~~Audit~~ — **Phase 8** records; ~~monitoring~~ — **Phase 9** counts what was
+   recorded. Anomalies, baselining, incidents, alerting and response remain: they judge
+   numbers rather than produce them, and nothing of that kind exists yet.
 5. Intelligence layer (Nemotron / Nebius) as an *advisor* that proposes; the
    deterministic services continue to decide.

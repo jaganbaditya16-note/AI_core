@@ -465,13 +465,19 @@ def test_case_d_no_approval_endpoint_exists() -> None:
     *does* build approvals would have to publish itself here and fail this test rather
     than quietly making the refusal above a lie.
     """
-    paths = set(create_app().openapi()["paths"])
+    paths = create_app().openapi()["paths"]
     assert not [path for path in paths if "approval" in path.lower()]
-    assert not [
-        path
-        for path in paths
-        if "actions" in path and path != "/organizations/{organization_id}/actions/execute"
-    ]
+
+    # The execution route is the only path an action is *acted on*. Phase 9 added a
+    # read-only view of the same activity — ``/monitoring/actions`` — so the guard is
+    # stated as what it always meant: everything else that mentions actions accepts GET
+    # alone, and nothing in the surface approves, rejects, queues or notifies.
+    for path, methods in paths.items():
+        if path == "/organizations/{organization_id}/actions/execute" or "actions" not in path:
+            continue
+        assert set(methods) == {"get"}, (path, set(methods))
+    for word in ("approve", "queue", "notify"):
+        assert not [path for path in paths if word in path.lower()], word
 
 
 # ── CASE E: an unregistered action never reaches an adapter ──────────────────
@@ -858,16 +864,30 @@ def test_the_ledger_records_no_actor_and_no_refusal(
     assert not columns & {"actor_id", "actor_type", "decision", "policy_id", "correlation_id"}
     assert "metadata" not in columns
 
-    # Nothing later in this project is being pretended at either: no incident,
-    # monitoring, alerting or webhook surface exists in this build.
+    # Nothing later in this project is being pretended at either: no incident, alerting,
+    # approval, containment or webhook surface exists in this build — and monitoring
+    # arrived in Phase 9 as measurement over the trail, which is a read of it and not a
+    # second record.
     routes = [
         context.original_route
         for context in iter_route_contexts(create_app().routes)
         if isinstance(context.original_route, APIRoute)
     ]
     paths = [route.path for route in routes]
-    for forbidden in ("incident", "monitor", "alert", "webhook"):
+    for forbidden in ("incident", "alert", "approval", "webhook", "containment"):
         assert not [path for path in paths if forbidden in path.lower()], forbidden
+
+    # Monitoring arrived in Phase 9, and this is the boundary it did not move: the five
+    # monitoring views read the trail — GET alone, no verb that could act on what they
+    # count — and the ledger is still neither a monitoring system nor a record of refusals.
+    monitoring = sorted(path for path in paths if "/monitoring/" in path)
+    assert monitoring == [
+        f"/organizations/{{organization_id}}/monitoring/{view}"
+        for view in ("actions", "agents", "policies", "summary", "trends")
+    ]
+    assert all(
+        sorted(route.methods or []) == ["GET"] for route in routes if "monitoring" in route.path
+    )
 
     # And the trail itself is read-only: one path, and it accepts GET alone, so nothing
     # in the API can create an event or alter one.

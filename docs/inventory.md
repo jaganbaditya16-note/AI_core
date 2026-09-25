@@ -368,7 +368,9 @@ one:
   exists. Nothing observes anything. Manual registration and the internal service
   boundary are the only two ways in.
 - **No runtime effect.** `suspended` and `retired` change a record; they do not
-  change any system. There is no policy, firewall, kill switch or monitor.
+  change any system. (Phases 6 to 9 built the policy engine, the action firewall, the
+  audit trail and monitoring over it; none of them acts on this inventory's statuses.
+  There is still no kill switch, and no containment of any kind.)
 - **Risk classification is storage.** Five values, no scoring, no engine.
 - **No history.** An update overwrites the previous value; there is no revision
   table. The Phase 8 trail records that the change happened and which fields moved, not

@@ -547,7 +547,13 @@ def _agent_routes(app: FastAPI) -> dict[tuple[str, str], set[Permission]]:
     # FastAPI itself walks the effective routes.
     for context in iter_route_contexts(app.routes):
         route = context.original_route
-        if not isinstance(route, APIRoute) or "/agents" not in route.path:
+        if not isinstance(route, APIRoute):
+            continue
+        # The registry's own routes: the collection and its items. Matched on path
+        # *segments* rather than on the string "/agents", because a later phase's view can
+        # legitimately contain that segment — /monitoring/agents measures the same subject
+        # without being a registry route, and this test is about the registry.
+        if route.path != _AGENT_PARENT and not route.path.startswith(f"{_AGENT_PARENT}/"):
             continue
         for method in route.methods - {"HEAD", "OPTIONS"}:
             declared[(method, route.path)] = _required_permissions(route)
@@ -785,7 +791,9 @@ def test_the_registry_exposes_no_runtime_control() -> None:
     an agent" from quietly becoming false.
     """
     paths = create_app().openapi()["paths"]
-    registry_paths = {path for path in paths if "/agents" in path}
+    registry_paths = {
+        path for path in paths if path == _AGENT_PARENT or path.startswith(f"{_AGENT_PARENT}/")
+    }
     assert registry_paths == {
         _AGENT_PARENT,
         f"{_AGENT_PARENT}/identity/{{identity_id}}",

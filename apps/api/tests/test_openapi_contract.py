@@ -142,6 +142,124 @@ EXPECTED_AUDIT_SCHEMAS = {
 }
 
 
+#: Phase 9's published shapes. Every one of them is a *response*: monitoring has no
+#: request model and no write route, because a measurement is something the server
+#: reports and nothing a client can set. The field names are the contract — `total_events`
+#: is a count of the trail, `execution_health` is two counts and two nullable ratios, and
+#: there is no score, no severity and no status word anywhere among them.
+EXPECTED_MONITORING_SCHEMAS = {
+    "MonitoringWindowRead": {"name", "start", "end"},
+    "ExecutionHealthRead": {"completed", "succeeded", "failed", "success_rate", "failure_rate"},
+    "DenialSummaryRead": {"total", "by_reason"},
+    "MonitoringSummaryResponse": {
+        "organization_id",
+        "window",
+        "total_events",
+        "action_requests",
+        "action_executions",
+        "action_failures",
+        "action_denials",
+        "action_replays",
+        "approval_required",
+        "asset_creations",
+        "asset_updates",
+        "asset_deletions",
+        "asset_discoveries",
+        "agent_registrations",
+        "agent_updates",
+        "agent_deletions",
+        "policy_creations",
+        "policy_updates",
+        "policy_version_publications",
+        "policy_status_changes",
+        "policy_deletions",
+        "policy_changes",
+        "active_agents",
+        "active_assets",
+        "execution_health",
+        "denials",
+    },
+    "MonitoringAgentRead": {
+        "agent_id",
+        "events",
+        "action_requests",
+        "executions",
+        "failures",
+        "denials",
+        "approval_required",
+        "replays",
+        "last_activity_at",
+    },
+    "MonitoringAgentListResponse": {
+        "organization_id",
+        "window",
+        "items",
+        "limit",
+        "offset",
+        "count",
+        "total",
+    },
+    "MonitoringActionRead": {
+        "action",
+        "requested",
+        "allowed",
+        "denied",
+        "approval_required",
+        "executed",
+        "failed",
+        "replayed",
+    },
+    "MonitoringActionListResponse": {"organization_id", "window", "items", "count"},
+    "MonitoringDecisionsRead": {"allow", "deny", "require_approval"},
+    "MonitoringPolicyLifecycleRead": {
+        "created",
+        "updated",
+        "version_published",
+        "status_changed",
+        "deleted",
+        "changes",
+    },
+    "MonitoringPolicyResponse": {"organization_id", "window", "decisions", "lifecycle"},
+    "TrendBucketRead": {
+        "start",
+        "end",
+        "events",
+        "action_requests",
+        "action_executions",
+        "action_failures",
+        "action_denials",
+        "approval_required",
+    },
+    "MonitoringTrendResponse": {"organization_id", "window", "interval", "buckets", "count"},
+}
+
+MONITORING_ROUTES = (
+    "/organizations/{organization_id}/monitoring/summary",
+    "/organizations/{organization_id}/monitoring/agents",
+    "/organizations/{organization_id}/monitoring/actions",
+    "/organizations/{organization_id}/monitoring/policies",
+    "/organizations/{organization_id}/monitoring/trends",
+)
+
+#: Words that would mean the published contract had grown a judgement. Same list the
+#: Phase 9 tests check against: a measurement reports numbers, and a verdict is a
+#: different subject with a different phase.
+MONITORING_VERDICT_WORDS = (
+    "risk",
+    "score",
+    "anomal",
+    "incident",
+    "alert",
+    "severity",
+    "baseline",
+    "threat",
+    "recommend",
+    "remediat",
+    "suspend",
+    "kill",
+)
+
+
 EXPECTED_ASSET_REQUEST_FIELDS = {
     "AssetCreate": {
         "name",
@@ -561,6 +679,44 @@ def test_the_audit_trail_contract_is_read_only(client: TestClient) -> None:
     assert set(schemas["AuditDecision"]["enum"]) == set(schemas["FirewallOutcome"]["enum"])
 
 
+def test_the_monitoring_contract_is_a_read_of_the_trail(client: TestClient) -> None:
+    """Five reads, measured in a window the server decides — and nothing else.
+
+    The document is the client's whole view of monitoring, so this is where the phase's
+    boundaries are checkable from outside: every route is a ``GET``, every shape is a
+    response, the window vocabulary is enumerated rather than described, and no published
+    field name judges the activity it counts.
+    """
+    document = client.get("/openapi.json").json()
+    schemas = document["components"]["schemas"]
+    paths = document["paths"]
+
+    for name, fields in EXPECTED_MONITORING_SCHEMAS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    monitoring_paths = {path: methods for path, methods in paths.items() if "monitoring" in path}
+    assert set(monitoring_paths) == set(MONITORING_ROUTES)
+    for path, methods in monitoring_paths.items():
+        assert set(methods) == {"get"}, (path, methods)
+        assert {"200", "401", "403", "404", "422"} <= set(methods["get"]["responses"]), path
+
+    # The vocabularies a client switches on are enumerated, not left as free strings.
+    assert set(schemas["MonitoringWindow"]["enum"]) == {"5m", "15m", "1h", "24h", "7d", "custom"}
+    assert set(schemas["TimeInterval"]["enum"]) == {"hour", "day"}
+
+    # A measurement is reported, never requested: there is no monitoring request model.
+    assert not [
+        name
+        for name in schemas
+        if "Monitoring" in name and name.endswith(("Request", "Create", "Update", "Patch"))
+    ]
+    for name, fields in EXPECTED_MONITORING_SCHEMAS.items():
+        for field in fields:
+            for word in MONITORING_VERDICT_WORDS:
+                assert word not in field.lower(), (name, field, word)
+
+
 def test_the_execution_route_documents_every_refusal(client: TestClient) -> None:
     """The one route that can execute something says how it fails, in the document.
 
@@ -610,6 +766,7 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         | {field for fields in EXPECTED_AGENT_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_ACTION_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_AUDIT_SCHEMAS.values() for field in fields}
+        | {field for fields in EXPECTED_MONITORING_SCHEMAS.values() for field in fields}
     )
     for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
@@ -644,6 +801,19 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "FirewallDecision",
         "AuditEvent",
         "AuditEventListResponse",
+        "MonitoringSummaryResponse",
+        "MonitoringAgentRead",
+        "MonitoringAgentListResponse",
+        "MonitoringActionRead",
+        "MonitoringActionListResponse",
+        "MonitoringPolicyResponse",
+        "MonitoringTrendResponse",
+        "MonitoringWindowRead",
+        "ExecutionHealth",
+        "DenialSummary",
+        "MonitoringDecisionsRead",
+        "MonitoringPolicyLifecycleRead",
+        "TrendBucket",
     ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
 
@@ -670,6 +840,8 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "AuditSource",
         "AuditDecision",
         "AuditOutcome",
+        "MonitoringWindow",
+        "MonitoringInterval",
     ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
     for value in (
@@ -698,6 +870,10 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "environment_mismatch",
         "approval_required",
         "idempotency_conflict",
+        "unspecified",
+        "custom",
+        "hour",
+        "day",
         "execution_failed",
         "asset.discovered",
         "agent.registered",

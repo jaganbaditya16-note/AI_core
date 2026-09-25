@@ -60,7 +60,12 @@ the one action that exists is a read-only assessment. See
 [actions.md](actions.md).)
 
 **Monitoring & response:** monitoring, audit system, anomaly detection, risk
-engine, incident management, cost engine, metric dashboards.
+engine, incident management, cost engine, metric dashboards. (Phase 8 built the audit
+system — an append-only record of security-relevant activity — and Phase 9 monitoring
+over it: bounded windows, deterministic counts and trends, and the five read-only
+endpoints described in [monitoring.md](monitoring.md). Anomaly detection, risk scoring,
+incident management, alerting, cost and dashboards are still absent, and monitoring
+judges nothing: a number is reported, never scored.)
 
 **Intelligence:** NVIDIA Nemotron integration, Nebius Token Factory
 integration, AI assistant, natural-language security queries.

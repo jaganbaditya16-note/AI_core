@@ -292,8 +292,10 @@ them; until then "requires approval" means "does nothing until then".
 - **No agent execution and no runtime control.** Nothing starts, stops, suspends,
   quarantines or contains an agent; the firewall runs registered actions, and the one
   that exists only reads.
-- **No audit/event system, no monitoring, no kill switch, no incidents** — and the
-  ledger is explicitly not a substitute for any of them.
+- **No monitoring, no kill switch, no incidents** — and the ledger is explicitly not a
+  substitute for any of them. (Phase 8 built the audit trail this ledger is *not* — it
+  records refusals and decisions, which the ledger cannot — and Phase 9 counts that
+  trail: see [audit.md](audit.md) and [monitoring.md](monitoring.md).)
 - **No LLM anywhere in the path.** Nemotron is an advisory layer in a later phase; it
   does not authorize, evaluate, decide or execute, and no decision here could be
   generated text.

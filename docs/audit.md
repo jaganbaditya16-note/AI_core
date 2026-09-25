@@ -9,8 +9,10 @@
 > Phase 8's `aicore.audit_events` table is the application-level record of
 > security-relevant activity: who did what, in which organization, when, against which
 > resource, with what decision, and what came of it. **The audit trail is not anomaly
-> detection, baseline analysis, monitoring, incident management or alerting.** It is a
-> record. Everything that would read it and act — baselines, anomalies, incidents,
+> detection, baseline analysis, incident management or alerting.** It is a record.
+> Phase 9 *reads* it — [monitoring.md](monitoring.md) counts this trail in bounded windows
+> and reports the numbers — and reading to count is all that happens: nothing here judges
+> a number, and everything that would act on one — baselines, anomalies, incidents,
 > alerting, dashboards, containment — belongs to a later phase and does not exist here.
 
 Phases 5, 6 and 7 *decide*. Phase 8 remembers. It adds one table, one internal writer,
@@ -22,6 +24,7 @@ The invariant the whole build now satisfies:
 ```
 DISCOVER → IDENTITY → PERMISSION → POLICY → ACTION FIREWALL → CONTROLLED EXECUTION
                                       → AUDIT EVENT → QUERYABLE SECURITY HISTORY
+                                      → MONITORING (Phase 9: the same record, counted)
 ```
 
 Audit observes. It never authorizes, never decides, never executes and never changes an
@@ -375,8 +378,10 @@ bash scripts/test-db.sh         # empty database → migrations → drift check 
 - **Refusals before admission are not events.** A 403 from a route's permission dependency
   is a refusal of an attempt, not a record of an operation — the trail records what the
   platform did.
-- **No anomaly detection, baselines, monitoring, alerting, dashboards, incidents, kill
-  switch or containment.** Phase 8 is a record; nothing reads it automatically.
+- **No anomaly detection, baselines, alerting, dashboards, incidents, kill switch or
+  containment.** Phase 9 counts this trail — see [monitoring.md](monitoring.md) — and
+  counting is as far as that goes: a number is reported, never judged, and nothing reads
+  the trail automatically in order to act on it.
 - **No SIEM/Kafka/Redis/Elasticsearch integration, no LLM summarization.** The endpoint is
   REST and tenant-scoped, and the trail is queried, not streamed.
 - **One table, one writer, one endpoint.** Assets, agents and policies are the resources

@@ -441,6 +441,8 @@ removing a tenant stays an explicit procedure.
 - No interception, no containment and no kill switch.
 - No approval workflow, approver, queue or UI: `require_approval` is a value.
 - No suspension as a policy action, and no policy-triggered side effect of any kind.
-- No monitoring, anomaly or threat detection, incidents or dependency graph.
+- No anomaly or threat detection, incidents or dependency graph, and no part in the
+  counting Phase 9 added: monitoring observes what the engine decided, and it cannot
+  change a policy, an answer or a precedence (see [monitoring.md](monitoring.md)).
 - No model provider, no Nemotron, no Nebius, no cloud integration.
 - No Control Center UI: this phase ships a backend contract and shared types.

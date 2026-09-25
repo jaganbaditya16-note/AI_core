@@ -822,6 +822,244 @@ export interface AuditEventListResponse {
   total: number | null;
 }
 
+/* ── Monitoring (Phase 9) ────────────────────────────────────────────────── */
+
+/**
+ * The bounded windows this build measures over, plus an explicit range.
+ *
+ * Every named window has a fixed length and the server decides *when* it ends: a client
+ * chooses which interval to read, never what time it is. `custom` is the escape hatch for
+ * an investigation with its own edges, and it is bounded too — a month, and never
+ * unbounded, because an open-ended range is priced by how long the organization has
+ * existed.
+ */
+export type MonitoringWindow = "5m" | "15m" | "1h" | "24h" | "7d" | "custom";
+
+/** How finely a series is bucketed: an hour for the day being worked in, a day beyond it. */
+export type MonitoringInterval = "hour" | "day";
+
+/**
+ * The interval a response measured, as the server resolved it.
+ *
+ * Both bounds are inclusive and in UTC, and `end` is the server's clock at the moment of
+ * the request — so "activity went up" can always be checked against "compared to when".
+ */
+export interface MonitoringWindowRead {
+  name: MonitoringWindow;
+  /** Inclusive lower bound, in UTC. */
+  start: string;
+  /** Inclusive upper bound, in UTC: the server's clock. */
+  end: string;
+}
+
+/**
+ * How the actions that ran in the window ended.
+ *
+ * `success_rate` and `failure_rate` are `null` when nothing completed: a zero would read
+ * as "everything failed", which is the opposite of "nothing ran". Refusals are not in
+ * these counts — a request that never ran cannot fail.
+ */
+export interface ExecutionHealth {
+  /** Executions that finished: `succeeded + failed`. */
+  completed: number;
+  succeeded: number;
+  failed: number;
+  /** Share of completed executions that succeeded; null when none completed. */
+  success_rate: number | null;
+  /** Share of completed executions that failed; null when none completed. */
+  failure_rate: number | null;
+}
+
+/**
+ * Refusals in the window, and which layer produced them.
+ *
+ * A denial is an event Phase 8 recorded — a request was refused and nothing ran — not an
+ * incident and not a finding. `by_reason` is the firewall's own vocabulary, and a refusal
+ * whose reason could not be read is counted under `unspecified` rather than dropped.
+ */
+export interface DenialSummary {
+  total: number;
+  /**
+   * Counts keyed by the reason the refusal recorded: `"authorization_denied"`,
+   * `"policy_denied"`, `"target_not_found"`, `"environment_mismatch"` or `"unspecified"` —
+   * the last being a refusal whose reason could not be read, counted rather than dropped so
+   * the breakdown always adds up to `total`. The keys are a closed vocabulary owned by the
+   * firewall; a client should treat an unknown key as a reason it does not render yet.
+   */
+  by_reason: Record<string, number>;
+}
+
+/**
+ * `GET /organizations/{organization_id}/monitoring/summary`.
+ *
+ * Every field is a count of events of a stated type within the recorded window: what the
+ * action pipeline did, what the inventory and registry changed, and whether the rules
+ * moved. There is no score, no severity and no verdict — a spike is a bigger number.
+ */
+export interface MonitoringSummaryResponse {
+  organization_id: string;
+  window: MonitoringWindowRead;
+  /** Every audit event in the window. */
+  total_events: number;
+  action_requests: number;
+  action_executions: number;
+  action_failures: number;
+  action_denials: number;
+  action_replays: number;
+  approval_required: number;
+  asset_creations: number;
+  asset_updates: number;
+  asset_deletions: number;
+  asset_discoveries: number;
+  agent_registrations: number;
+  agent_updates: number;
+  agent_deletions: number;
+  policy_creations: number;
+  policy_updates: number;
+  policy_version_publications: number;
+  policy_status_changes: number;
+  policy_deletions: number;
+  /** The five policy counters above, summed. */
+  policy_changes: number;
+  /** Distinct agents named by at least one event in the window. */
+  active_agents: number;
+  /** Distinct assets named by at least one event in the window. */
+  active_assets: number;
+  execution_health: ExecutionHealth;
+  denials: DenialSummary;
+}
+
+/**
+ * One agent's activity in the window.
+ *
+ * Present only when the agent is named by at least one event: this build measures
+ * activity, and it cannot tell an idle agent from one whose requests never happened.
+ */
+export interface MonitoringAgentRead {
+  agent_id: string;
+  events: number;
+  action_requests: number;
+  executions: number;
+  failures: number;
+  denials: number;
+  approval_required: number;
+  replays: number;
+  /** The newest event's recorded time, in UTC. */
+  last_activity_at: string;
+}
+
+/**
+ * `GET /organizations/{organization_id}/monitoring/agents`.
+ *
+ * Ordered by event count descending, then by identifier ascending — the second key makes
+ * the order total, so paging cannot repeat or skip an agent. `total` is present only when
+ * the caller asked for it, because it costs a second query.
+ */
+export interface MonitoringAgentListResponse {
+  organization_id: string;
+  window: MonitoringWindowRead;
+  items: MonitoringAgentRead[];
+  limit: number;
+  offset: number;
+  count: number;
+  total: number | null;
+}
+
+/**
+ * One registered action's activity in the window.
+ *
+ * `allowed` counts requests the firewall permitted, whatever came of them, while the rest
+ * count events: a request that was allowed and then failed is both `allowed` and `failed`.
+ */
+export interface MonitoringActionRead {
+  action: string;
+  requested: number;
+  allowed: number;
+  denied: number;
+  approval_required: number;
+  executed: number;
+  failed: number;
+  replayed: number;
+}
+
+/** `GET /organizations/{organization_id}/monitoring/actions`: one row per action that ran. */
+export interface MonitoringActionListResponse {
+  organization_id: string;
+  window: MonitoringWindowRead;
+  items: MonitoringActionRead[];
+  count: number;
+}
+
+/** How the action pipeline answered, by decision. Every value is present, at zero if unseen. */
+export interface MonitoringDecisionsRead {
+  allow: number;
+  deny: number;
+  require_approval: number;
+}
+
+/**
+ * Activity on the policy record itself: the definition, its versions and its state.
+ *
+ * Counts, never recommendations: the field says a policy was activated, and there is no
+ * field a client could read as advice about what to change.
+ */
+export interface MonitoringPolicyLifecycleRead {
+  created: number;
+  updated: number;
+  version_published: number;
+  status_changed: number;
+  deleted: number;
+  /** The five counts above, summed. */
+  changes: number;
+}
+
+/**
+ * `GET /organizations/{organization_id}/monitoring/policies`.
+ *
+ * Two different facts, kept apart: `decisions` is what the pipeline answered for requests,
+ * `lifecycle` is what changed on the policy record. A denial is counted, never attributed
+ * to a named policy — the trail records the decision and its reason, not which policy
+ * produced it.
+ */
+export interface MonitoringPolicyResponse {
+  organization_id: string;
+  window: MonitoringWindowRead;
+  decisions: MonitoringDecisionsRead;
+  lifecycle: MonitoringPolicyLifecycleRead;
+}
+
+/**
+ * One interval of a time series: half-open on the Python side, inclusive both ends in the
+ * query, and one interval wide in every case.
+ */
+export interface TrendBucket {
+  /** Inclusive start of the bucket, in UTC. */
+  start: string;
+  /** Exclusive end of the bucket, in UTC. */
+  end: string;
+  events: number;
+  action_requests: number;
+  action_executions: number;
+  action_failures: number;
+  action_denials: number;
+  approval_required: number;
+}
+
+/**
+ * `GET /organizations/{organization_id}/monitoring/trends`.
+ *
+ * A complete series: every bucket between the window's first and last, in order, with the
+ * quiet ones present as zeros. No smoothing, no interpolation, no moving average — the
+ * counts are the counts.
+ */
+export interface MonitoringTrendResponse {
+  organization_id: string;
+  window: MonitoringWindowRead;
+  interval: MonitoringInterval;
+  buckets: TrendBucket[];
+  count: number;
+}
+
 /* ── Errors ──────────────────────────────────────────────────────────────── */
 
 /**

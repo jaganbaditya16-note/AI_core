@@ -93,6 +93,16 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     # already held ``audit.read``, and the administrator deliberately does not — oversight
     # is not administration.
     ("GET", "/organizations/{organization_id}/audit-events"): {Permission.AUDIT_READ},
+    # Monitoring is the same record, counted. Phase 9 added no permission either: a
+    # measurement is a sum over rows the caller can already read, so inventing
+    # ``monitoring.read`` would guard nothing and — granted to a role that lacks
+    # ``audit.read`` — would hand that role the trail's contents in aggregate. Every view
+    # is a read, so every view requires the read permission.
+    ("GET", "/organizations/{organization_id}/monitoring/summary"): {Permission.AUDIT_READ},
+    ("GET", "/organizations/{organization_id}/monitoring/agents"): {Permission.AUDIT_READ},
+    ("GET", "/organizations/{organization_id}/monitoring/actions"): {Permission.AUDIT_READ},
+    ("GET", "/organizations/{organization_id}/monitoring/policies"): {Permission.AUDIT_READ},
+    ("GET", "/organizations/{organization_id}/monitoring/trends"): {Permission.AUDIT_READ},
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)

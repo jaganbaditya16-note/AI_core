@@ -46,6 +46,7 @@ from aicore_api.main import create_app  # noqa: E402
 from assets_fixture import AssetFactory  # noqa: E402
 from audit_fixture import AuditFactory, AuditScene  # noqa: E402
 from identity_fixture import Identity, IdentityFactory  # noqa: E402
+from monitoring_fixture import MonitoringScene  # noqa: E402
 from policies_fixture import PolicyFactory  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
 
@@ -354,6 +355,25 @@ def audit(
         # Before the identity purge, which happens after this fixture: the resources and
         # the trail reference their organization with RESTRICT, and the trail only
         # deletes under the override the fixture names.
+        scene.purge()
+
+
+@pytest.fixture
+def monitoring(audit: AuditScene) -> Iterator[MonitoringScene]:
+    """Phase 9's fixture: the audit scene, read through the monitoring endpoints.
+
+    Monitoring measures the trail, so its tests need activity *and* the recording of it in
+    one tenant, under one credential, on one client — which is exactly what the Phase 8
+    scene already provides. This wraps it rather than rebuilding it, and adds the two
+    things the views need that the trail's own fixture does not: reading the five views,
+    and placing history at instants the server's clock cannot produce.
+    """
+    scene = MonitoringScene(audit=audit)
+    try:
+        yield scene
+    finally:
+        # The audit scene's own teardown removes the trail; nothing extra is created
+        # except the seeded rows, which live in that trail.
         scene.purge()
 
 

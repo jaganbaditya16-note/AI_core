@@ -584,6 +584,13 @@ def _declared_permissions(route: APIRoute) -> set[Permission]:
 #: role resource on purpose: the catalogue is read through ``role.read``, because a
 #: permission only means something as part of a role.
 PATH_RESOURCES = (
+    # Order matters here, and this entry has to come first: several resource prefixes are
+    # *contained in* another route's path — ``/monitoring/agents`` ends with ``/agents``
+    # and ``/monitoring/actions`` ends with ``/actions`` — and the first match wins. A
+    # monitoring route is a read of the trail, so its resource is the audit one; if this
+    # entry moved below the others, the sweep would demand ``agent.read`` of a view that
+    # is guarded by ``audit.read``.
+    ("/monitoring", Resource.AUDIT),
     ("/assets", Resource.ASSET),
     ("/agents", Resource.AGENT),
     ("/policies", Resource.POLICY),

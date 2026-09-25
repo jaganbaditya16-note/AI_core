@@ -1,6 +1,6 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 8: the audit trail**. Phase 0
+**Enterprise AI Control Plane** — currently at **Phase 9: monitoring**. Phase 0
 delivered the skeleton, Phase 1 the PostgreSQL schema and tenant boundary, Phase 2 the
 identity layer on top of it (bearer tokens identify a user, memberships bind them to an
 organization with a role, protected routes authorize against explicit permissions),
@@ -9,9 +9,9 @@ identity for one of those assets), Phase 5 the authorization foundation (a close
 resource/action vocabulary and a deterministic, structured authorization decision),
 Phase 6 the policy engine (org-scoped definitions, a closed condition language, a
 deterministic evaluator, versioned history), Phase 7 the action firewall (the enforcement
-boundary: only `ALLOW` reaches an adapter) and Phase 8 the audit trail: an append-only,
+boundary: only `ALLOW` reaches an adapter), Phase 8 the audit trail — an append-only,
 tenant-scoped record of security-relevant activity, written by the platform and read
-through one read-only endpoint.
+through one read-only endpoint — and Phase 9 monitoring: that same record, counted.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -27,9 +27,11 @@ running a registered action from a closed, code-level catalogue, through a pipel
 that authenticates, authorizes, evaluates a policy and decides before any adapter is
 called. Only `ALLOW` reaches an adapter. Since Phase 8 that pipeline also **records**:
 one append-only event per security-relevant operation, with server-resolved attribution
-and a sanitized summary, queryable per organization through one read-only endpoint.
-Nothing intercepts an agent, nothing is blocked at runtime, no approval is ever granted,
-nothing is monitored and no record is acted on automatically —
+and a sanitized summary, queryable per organization through one read-only endpoint. Since
+Phase 9 that record can be **counted** — activity, refusals, failures, changes and trends,
+per window and per agent or action — without any of it becoming a verdict. Nothing
+intercepts an agent, nothing is blocked at runtime, no approval is ever granted, no
+number is judged and no record is acted on automatically —
 [`docs/phase-0-scope.md`](docs/phase-0-scope.md) lists exactly what is absent.
 
 ## Architecture direction
@@ -89,7 +91,7 @@ database/
     versions/0006_action_firewall.py
     versions/0007_audit_events.py
 tests/e2e/              Playwright smoke tests
-docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, audit, ADRs
+docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, audit, monitoring, ADRs
 infrastructure/         docker-compose.yml
 scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
@@ -196,7 +198,8 @@ carries `X-Request-ID`.
   trail's read-only endpoint.)
 - **No domain tables beyond the tenant root, the identity tables, the asset
   inventory, the agent registry, the policy record, the execution ledger and the audit
-  trail.** Incident and monitoring tables arrive in later phases, through migrations.
+  trail.** Monitoring needed no table — Phase 9 counts the trail — and incident tables
+  arrive in a later phase, through migrations.
 - **No agent runtime.** An agent registry record names an agent; it does not run
   one. There is no execution, no session, no tool invocation, no credential issued
   to an agent, and `status: suspended` is a recorded state rather than a kill
@@ -215,16 +218,53 @@ carries `X-Request-ID`.
   [docs/actions.md](docs/actions.md).
 - **No AI features.** No model provider is integrated; no runtime containment,
   behaviour monitoring or incident handling.
-- **The audit trail is a record, not a control.** There is no monitoring dashboard, no
-  metrics, no anomaly detection, no baselining, no alerting, no incident management, no
-  retention job and no hash chain — a plain SHA-256 chain stored beside the rows it
+- **The audit trail is a record, not a control**, and since Phase 9 it is counted
+  rather than judged. There is no anomaly detection, no baselining, no scoring, no
+  alerting, no incident management, no automated response, no dashboard and no retention
+  job; the trail has no hash chain, because a plain SHA-256 chain stored beside the rows it
   covers would be recomputable by anyone who can write them, so the phase implements the
   part that is real without a key-management design and states the deferral:
-  [docs/audit.md](docs/audit.md).
+  [docs/audit.md](docs/audit.md) and [docs/monitoring.md](docs/monitoring.md).
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
+
+## What Phase 9 adds
+
+**Monitoring**: the Phase 8 record, counted — what is happening, how often, what is being
+refused, what is failing, what changed, and what is rising or falling. It observes and
+measures only; it never authorizes, executes, modifies a policy or suspends an agent, and
+it is not anomaly detection, not incident response and not intelligence.
+
+- **No second event system** — every number is a `COUNT` over `aicore.audit_events`, in a
+  bounded window, computed by PostgreSQL. Facts are derived, never re-interpreted: the
+  event vocabulary is exactly Phase 8's, and monitoring writes no event at all.
+- **No new table and no migration** — the database stays at `0007_audit_events`, the
+  aggregates use Phase 8's indexes, and a test asserts both.
+- **Bounded windows, decided by the server** — `5m`, `15m`, `1h`, `24h`, `7d` or an explicit
+  `custom` range (at most 30 days). A malformed or unbounded request is a `422` naming the
+  problem rather than an empty answer that would look like a quiet period.
+- **Five read-only endpoints** — summary, agents, actions, policies and trends, each
+  repeating the resolved window, each returning counts and times and never a raw row. There
+  is no activity feed duplicating the trail listing, no health verdict and no threshold
+  configuration.
+- **An honest series** — buckets floored in UTC on both sides, at most 366 of them, empty
+  buckets returned as zeros, and nothing interpolated.
+- **Execution health without a false zero** — rates are `null` when nothing completed, and
+  only completed executions are in the denominator: a refusal never ran.
+- **No new permission and no matrix change** — `audit.read` (owner, security_admin) already
+  guards reading the trail, and a measurement is a sum over rows it can already read.
+
+**Monitoring is not anomaly detection, and not incident response.** There is no baseline,
+threshold, score, severity, "normal", incident, alert, notification, containment or
+remediation anywhere in this phase; a denial is an observed event and stays one. Monitoring
+cannot act on what it counts — it holds no executor, no firewall, no policy engine and no
+session, and tests assert both the absence of those imports and that reading every view
+leaves the trail, the registry and the policy record byte for byte unchanged.
+
+Design, metric definitions, window semantics, the API, tenant isolation, RBAC, performance
+and limitations: [docs/monitoring.md](docs/monitoring.md).
 
 ## What Phase 8 adds
 
@@ -267,10 +307,11 @@ cannot change an answer.
 
 **The audit trail is not the execution ledger, and it is not a monitoring system.** The
 Phase 7 `action_executions` table is an idempotency mechanism and forgets refusals; the
-audit trail records them and has no key. And a record is not a control: there is no
-anomaly detection, no baseline, no dashboard, no alerting, no incident response and no
-containment. A hash chain is deliberately deferred, because a recomputable one would
-look like evidence while proving nothing — see [docs/audit.md](docs/audit.md).
+audit trail records them and has no key. And a record is not a control: Phase 9 counts
+the trail, and counting is all it does — there is no anomaly detection, no baseline, no
+dashboard, no alerting, no incident response and no containment. A hash chain is
+deliberately deferred, because a recomputable one would look like evidence while proving
+nothing — see [docs/audit.md](docs/audit.md).
 
 Design, event model, metadata boundary, append-only semantics and limitations:
 [docs/audit.md](docs/audit.md).
@@ -521,10 +562,11 @@ Design and rationale: [docs/database.md](docs/database.md).
    policy and the firewall all allow it, and only through an adapter. Approvals and
    the kill switch are still to come — they are the remaining places a policy
    decision would be carried out.
-4. Monitoring and response: behaviour, anomalies, cost, incidents, approvals and the
-   kill switch (making `security.read` mean something, and turning the audit trail from
-   a record into something that is read automatically). ``audit.read`` guards the trail
-   since **Phase 8**.
+4. ~~Monitoring~~ — **Phase 9** counts the trail: activity, refusals, failures, changes
+   and trends, per window and per agent or action, with no judgement attached. Response
+   and detection — behaviour, anomalies, cost, incidents, approvals and the kill switch —
+   are still to come, and they are a different subject with their own vocabulary.
+   ``audit.read`` guards the trail since **Phase 8** and monitoring since **Phase 9**.
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic
    decisions.
 

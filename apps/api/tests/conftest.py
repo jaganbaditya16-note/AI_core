@@ -48,6 +48,7 @@ from audit_fixture import AuditFactory, AuditScene  # noqa: E402
 from identity_fixture import Identity, IdentityFactory  # noqa: E402
 from monitoring_fixture import MonitoringScene  # noqa: E402
 from policies_fixture import PolicyFactory  # noqa: E402
+from risk_fixture import RiskScene  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
 
 # The fixture table is registered with the isolation guard for the whole session,
@@ -374,6 +375,22 @@ def monitoring(audit: AuditScene) -> Iterator[MonitoringScene]:
     finally:
         # The audit scene's own teardown removes the trail; nothing extra is created
         # except the seeded rows, which live in that trail.
+        scene.purge()
+
+
+@pytest.fixture
+def risk(monitoring: MonitoringScene, integration_engine: Engine) -> Iterator[RiskScene]:
+    """Phase 10's fixture: the monitoring scene, analysed through the risk endpoints.
+
+    The anomaly engine reads the same trail monitoring measures, so this wraps that scene
+    and adds history placed at exact instants, the three risk routes and the recorder.
+    Teardown removes recorded detections first: the tenant foreign key is ``RESTRICT``, and
+    the monitoring scene's own teardown then removes the trail.
+    """
+    scene = RiskScene(monitoring=monitoring, engine=integration_engine)
+    try:
+        yield scene
+    finally:
         scene.purge()
 
 

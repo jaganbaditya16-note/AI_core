@@ -1,6 +1,6 @@
 # AICore
 
-**Enterprise AI Control Plane** — currently at **Phase 9: monitoring**. Phase 0
+**Enterprise AI Control Plane** — currently at **Phase 10: anomaly & risk**. Phase 0
 delivered the skeleton, Phase 1 the PostgreSQL schema and tenant boundary, Phase 2 the
 identity layer on top of it (bearer tokens identify a user, memberships bind them to an
 organization with a role, protected routes authorize against explicit permissions),
@@ -11,7 +11,9 @@ Phase 6 the policy engine (org-scoped definitions, a closed condition language, 
 deterministic evaluator, versioned history), Phase 7 the action firewall (the enforcement
 boundary: only `ALLOW` reaches an adapter), Phase 8 the audit trail — an append-only,
 tenant-scoped record of security-relevant activity, written by the platform and read
-through one read-only endpoint — and Phase 9 monitoring: that same record, counted.
+through one read-only endpoint — Phase 9 monitoring: that same record, counted — and
+Phase 10 the anomaly & risk engine: each agent's recent activity compared with its own
+baseline, explained, and classified — detection only, with no automatic response.
 
 AICore is intended to let an organization discover the AI running in its
 environment, control what that AI is allowed to do, and monitor what it did, with
@@ -91,7 +93,7 @@ database/
     versions/0006_action_firewall.py
     versions/0007_audit_events.py
 tests/e2e/              Playwright smoke tests
-docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, audit, monitoring, ADRs
+docs/                   architecture, scope, development guide, inventory, agents, authorization, policies, actions, audit, monitoring, risk, ADRs
 infrastructure/         docker-compose.yml
 scripts/                dev-db, dev-api, py, migrate, test-db, verify, check-secrets
 ```
@@ -195,11 +197,11 @@ carries `X-Request-ID`.
 - **`security.read` has no subject yet.** It is part of the catalog and appears on
   `GET /me`, but there is no security finding to read — no route pretends otherwise.
   (`audit.read` is no longer in that position: since Phase 8 it guards the audit
-  trail's read-only endpoint.)
+  trail's read-only endpoint, and since Phases 9 and 10 monitoring and risk.)
 - **No domain tables beyond the tenant root, the identity tables, the asset
   inventory, the agent registry, the policy record, the execution ledger and the audit
-  trail.** Monitoring needed no table — Phase 9 counts the trail — and incident tables
-  arrive in a later phase, through migrations.
+  trail — and, since Phase 10, the insert-only anomaly detection record.** Monitoring
+  needed no table — Phase 9 counts the trail — and there is no incident table.
 - **No agent runtime.** An agent registry record names an agent; it does not run
   one. There is no execution, no session, no tool invocation, no credential issued
   to an agent, and `status: suspended` is a recorded state rather than a kill
@@ -218,17 +220,58 @@ carries `X-Request-ID`.
   [docs/actions.md](docs/actions.md).
 - **No AI features.** No model provider is integrated; no runtime containment,
   behaviour monitoring or incident handling.
-- **The audit trail is a record, not a control**, and since Phase 9 it is counted
-  rather than judged. There is no anomaly detection, no baselining, no scoring, no
+- **The audit trail is a record, not a control**: Phase 9 counts it and Phase 10
+  compares each agent with its own baseline and explains what is unusual — but a detection
+  is not an incident and a risk level is not a control. There is no numeric scoring, no
   alerting, no incident management, no automated response, no dashboard and no retention
   job; the trail has no hash chain, because a plain SHA-256 chain stored beside the rows it
   covers would be recomputable by anyone who can write them, so the phase implements the
   part that is real without a key-management design and states the deferral:
-  [docs/audit.md](docs/audit.md) and [docs/monitoring.md](docs/monitoring.md).
+  [docs/audit.md](docs/audit.md), [docs/monitoring.md](docs/monitoring.md) and
+  [docs/risk.md](docs/risk.md).
 - **Local verification caveats:** this sandbox has no Docker and blocks
   Playwright's browser CDN, so Compose is validated as configuration (and in CI)
   and E2E runs in CI or on a developer machine with browser access. Both are
   reported honestly by `scripts/verify.sh` rather than skipped silently.
+
+## What Phase 10 adds
+
+**Anomaly & risk**: each agent's recent activity (the *observation window*) compared with
+its own recent past (the *baseline window* immediately before it), with every finding
+explained. It is deterministic, read-only and analytical: it never authorizes, executes,
+invokes the firewall, blocks, approves, suspends, contains, changes a permission or a
+policy, opens an incident, alerts or remediates. **Detection ≠ incident, risk ≠
+authorization, and there is no automatic response.**
+
+- **Bounded, non-overlapping windows** — baseline `7d`, `14d` or `30d`; observation `1h`,
+  `6h` or `24h`; both half-open and adjacent, so the baseline never contains what it is
+  compared with. `as_of` is a whole UTC hour, never in the future.
+- **Cold start is a state** — an agent with too little history is `insufficient_history`,
+  `undetermined`, risk `none`, with the unmet rules listed. Nothing is anomalous for being
+  new, and no baseline is fabricated.
+- **A closed vocabulary** — `action_rate_spike`, `action_rate_drop`, `failure_rate_spike`,
+  `denial_rate_spike`, `novel_action`, `novel_resource`, `unusual_time`,
+  `unusual_frequency`.
+- **Statistics a reviewer can redo by hand** — mean ± max(3σ, 5) with exact zero-variance
+  handling, fixed share deltas, set difference, zero-baseline hours, peak five-minute
+  buckets. No model, no weights, no score.
+- **Five risk levels, each with reasons** — `none` … `critical`, from a stated base table
+  and stated escalations, recorded as structured factors beside structured evidence that
+  never contains metadata, arguments, payloads or credentials.
+- **Aggregated in PostgreSQL** — tenant-scoped, window-bounded, served by the trail's
+  existing index; a page of agents costs a fixed number of statements.
+- **One new table, insert-only** — `aicore.anomaly_detections` (migration
+  `0008_anomaly_detections`), deduplicated by a deterministic fingerprint; triggers refuse
+  `UPDATE` and `TRUNCATE`. Recorded by an operator command
+  (`python -m aicore_api.risk.cli record`), never by an HTTP request. The audit schema is
+  unchanged.
+- **Three `GET` routes, no new permission** — analysis, detection list and one detection,
+  each requiring `audit.read` (owner, security_admin), exactly as monitoring does. There is no request
+  body, so no client can supply a risk, a state, a baseline or evidence.
+- **No AI** — no language model, embedding, vector store or network inference.
+
+Vocabulary, methodology, cold start, statistics, risk factors, evidence, API and
+limitations: [docs/risk.md](docs/risk.md).
 
 ## What Phase 9 adds
 
@@ -563,10 +606,12 @@ Design and rationale: [docs/database.md](docs/database.md).
    the kill switch are still to come — they are the remaining places a policy
    decision would be carried out.
 4. ~~Monitoring~~ — **Phase 9** counts the trail: activity, refusals, failures, changes
-   and trends, per window and per agent or action, with no judgement attached. Response
-   and detection — behaviour, anomalies, cost, incidents, approvals and the kill switch —
-   are still to come, and they are a different subject with their own vocabulary.
-   ``audit.read`` guards the trail since **Phase 8** and monitoring since **Phase 9**.
+   and trends, per window and per agent or action, with no judgement attached.
+   ~~Anomaly & risk~~ — **Phase 10** compares each agent with its own baseline and
+   explains what is unusual, as detections and risk levels with evidence — never a
+   control. Response — cost, incidents, approvals and the kill switch — is still to come,
+   and it is a different subject with its own vocabulary. ``audit.read`` guards the trail
+   since **Phase 8**, monitoring since **Phase 9** and risk since **Phase 10**.
 5. Intelligence: Nemotron / Nebius as an advisory layer over deterministic
    decisions.
 

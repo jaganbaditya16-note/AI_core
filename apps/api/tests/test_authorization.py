@@ -103,6 +103,13 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     ("GET", "/organizations/{organization_id}/monitoring/actions"): {Permission.AUDIT_READ},
     ("GET", "/organizations/{organization_id}/monitoring/policies"): {Permission.AUDIT_READ},
     ("GET", "/organizations/{organization_id}/monitoring/trends"): {Permission.AUDIT_READ},
+    # Phase 10: anomaly & risk. An analysis is the trail in derived form, so every route
+    # requires the trail's read permission — as monitoring does — and no new one.
+    ("GET", "/organizations/{organization_id}/risk/analysis"): {Permission.AUDIT_READ},
+    ("GET", "/organizations/{organization_id}/risk/detections"): {Permission.AUDIT_READ},
+    ("GET", "/organizations/{organization_id}/risk/detections/{detection_id}"): {
+        Permission.AUDIT_READ
+    },
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
@@ -114,7 +121,8 @@ ITEM_ROUTES = [
     route
     for route in TENANT_ROUTES
     if any(
-        f"{{{name}}}" in route[1] for name in ("asset_id", "agent_id", "identity_id", "policy_id")
+        f"{{{name}}}" in route[1]
+        for name in ("asset_id", "agent_id", "identity_id", "policy_id", "detection_id")
     )
 ]
 
@@ -130,7 +138,7 @@ PROTECTED_ROUTES = [*TENANT_ROUTES, ("GET", "/me")]
 def _url(path: str, organization_id: uuid.UUID, item_id: uuid.UUID | None = None) -> str:
     """Render a route template, filling in an item id when the route names one."""
     rendered = path.replace("{organization_id}", str(organization_id))
-    for placeholder in ("asset_id", "agent_id", "identity_id", "policy_id"):
+    for placeholder in ("asset_id", "agent_id", "identity_id", "policy_id", "detection_id"):
         rendered = rendered.replace(f"{{{placeholder}}}", str(item_id or uuid.uuid4()))
     return rendered
 

@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import Engine, delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from aicore_api.db.models.anomaly_detection import AnomalyDetection
 from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
 from aicore_api.db.models.audit_event import AuditEvent
@@ -369,6 +370,18 @@ def purge_identities(engine: Engine, identities: Iterable[Identity]) -> None:
                                     AuditEvent.organization_id == organization_id
                                 )
                             )
+
+        for identity in identities:
+            # Phase 10's recorded detections reference the organization with RESTRICT.
+            # They are re-derivable findings (the table permits DELETE, never UPDATE), so a
+            # tenant that recorded any is swept here, in every organization it belongs to.
+            for organization_id, _membership_id in identity.memberships():
+                with bind_tenant(organization_id):
+                    session.execute(
+                        delete(AnomalyDetection).where(
+                            AnomalyDetection.organization_id == organization_id
+                        )
+                    )
 
         for identity in identities:
             # Policies go with the inventory, and for the same reason: a policy

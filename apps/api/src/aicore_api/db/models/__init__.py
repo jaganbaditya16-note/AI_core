@@ -28,12 +28,18 @@ who caused it (as the server resolved them), what was decided, what came of it, 
 which request it belonged to. It is written by
 ``aicore_api.audit.writer.AuditWriter`` and protected by a database trigger that
 refuses ``UPDATE``, ``DELETE`` and ``TRUNCATE``.
+
+Phase 10 adds ``anomaly_detections``: the findings of the deterministic anomaly and risk
+engine, derived from the trail and recorded by an operator — one immutable row per
+entity, detection type and analysis window, deduplicated by fingerprint. A finding, never
+an incident, and never read by authorization, policy or the firewall.
 """
 
 from __future__ import annotations
 
 from aicore_api.db.models.action_execution import ActionExecution
 from aicore_api.db.models.agent import Agent
+from aicore_api.db.models.anomaly_detection import AnomalyDetection
 from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
 from aicore_api.db.models.audit_event import AuditEvent
@@ -53,6 +59,7 @@ __all__ = [
     "SLUG_MAX_LENGTH",
     "ActionExecution",
     "Agent",
+    "AnomalyDetection",
     "ApiToken",
     "Asset",
     "AuditEvent",

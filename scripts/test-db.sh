@@ -197,6 +197,7 @@ try:
         "policy_versions",
         "action_executions",
         "audit_events",
+        "anomaly_detections",
     ):
         if table not in applied:
             sys.exit(f"[test-db] FAILED: the migration did not create {table}")

@@ -591,6 +591,8 @@ PATH_RESOURCES = (
     # entry moved below the others, the sweep would demand ``agent.read`` of a view that
     # is guarded by ``audit.read``.
     ("/monitoring", Resource.AUDIT),
+    # Phase 10: an anomaly analysis is also a read of the trail.
+    ("/risk", Resource.AUDIT),
     ("/assets", Resource.ASSET),
     ("/agents", Resource.AGENT),
     ("/policies", Resource.POLICY),

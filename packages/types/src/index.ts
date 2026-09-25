@@ -1060,6 +1060,231 @@ export interface MonitoringTrendResponse {
   count: number;
 }
 
+/* ── Anomaly & risk (Phase 10) ───────────────────────────────────────────── */
+
+/**
+ * Phase 10 compares an agent's observation window with its own baseline and explains what
+ * is unusual. Everything here is a *response*: no client submits an anomaly state, a risk
+ * level, a baseline, a statistic, evidence or a factor. A detection is a finding for a
+ * person to read — not an incident, not an alert, and never an authorization input.
+ */
+
+/** Baseline windows: bounded, named, and never "all history". */
+export type RiskBaselineWindow = "7d" | "14d" | "30d";
+
+/** Observation windows. Each is also the length of one baseline slot. */
+export type RiskObservationWindow = "1h" | "6h" | "24h";
+
+/** What an analysis is about. */
+export type RiskEntityType = "agent";
+
+/** The closed detection vocabulary. */
+export type DetectionType =
+  | "action_rate_spike"
+  | "action_rate_drop"
+  | "failure_rate_spike"
+  | "denial_rate_spike"
+  | "novel_action"
+  | "novel_resource"
+  | "unusual_time"
+  | "unusual_frequency";
+
+/** Whether an entity had enough history to be analysed at all. */
+export type AnalysisStatus = "analyzed" | "insufficient_history";
+
+/** `undetermined` is "could not tell" — never the same as "nothing unusual". */
+export type AnomalyState = "anomalous" | "not_anomalous" | "undetermined";
+
+/** Five words, never a number. */
+export type RiskLevel = "none" | "low" | "medium" | "high" | "critical";
+
+/** The cold-start rules an entity did not meet. */
+export type InsufficientReason =
+  | "no_baseline_activity"
+  | "baseline_events_below_minimum"
+  | "history_span_below_minimum"
+  | "active_slots_below_minimum";
+
+/** What one detection check concluded. */
+export type CheckStatus = "detected" | "not_detected" | "insufficient_data" | "not_evaluated";
+
+/** Why a check did not run, or had too little data to decide. */
+export type CheckReason =
+  | "entity_history_insufficient"
+  | "baseline_mean_below_drop_margin"
+  | "baseline_sample_below_minimum"
+  | "observed_sample_below_minimum"
+  | "baseline_resource_set_unstable"
+  | "baseline_hours_saturated";
+
+/** The deterministic factors a risk level is built from. */
+export type RiskFactorCode =
+  | "activity_spike"
+  | "activity_drop"
+  | "failure_rate_elevated"
+  | "denial_rate_elevated"
+  | "novel_action_used"
+  | "novel_resource_targeted"
+  | "off_hours_activity"
+  | "burst_activity"
+  | "extreme_deviation"
+  | "multiple_detection_types"
+  | "broad_behaviour_change";
+
+/** A `base` factor sets a level; an `escalation` factor raises it by `steps`. */
+export type FactorEffect = "base" | "escalation";
+
+/** The two intervals an analysis compared. Half-open and adjacent. */
+export interface RiskWindowsRead {
+  baseline: RiskBaselineWindow;
+  baseline_start: string;
+  baseline_end: string;
+  observation: RiskObservationWindow;
+  observation_start: string;
+  /** Exclusive end of the observation: the analysis's as_of. */
+  observation_end: string;
+  slot_seconds: number;
+  slots: number;
+}
+
+export interface RiskFactorRead {
+  code: RiskFactorCode;
+  effect: FactorEffect;
+  level: RiskLevel | null;
+  steps: number | null;
+  detection_type: DetectionType | null;
+  count: number | null;
+}
+
+export interface RiskCheckRead {
+  detection_type: DetectionType;
+  status: CheckStatus;
+  reason: CheckReason | null;
+}
+
+/** Mean and population standard deviation of per-slot request counts. */
+export interface RiskBaselineStatisticsRead {
+  history_slots: number;
+  events: number;
+  mean: number;
+  stddev: number;
+  zero_variance: boolean;
+}
+
+export interface RiskObservationRead {
+  requests: number;
+  denials: number;
+  executions: number;
+  failures: number;
+}
+
+/** Action, target and time behaviour — counts only, never arguments. */
+export interface RiskAgentBehaviourRead {
+  baseline_requests: number;
+  baseline_active_slots: number;
+  baseline_distinct_actions: number;
+  observed_distinct_actions: number;
+  novel_action_count: number;
+  baseline_distinct_resources: number;
+  observed_distinct_resources: number;
+  novel_resource_count: number;
+  baseline_active_hours_utc: number;
+  observed_active_hours_utc: number;
+  baseline_peak_requests: number;
+  observed_peak_requests: number;
+}
+
+/**
+ * The evidence every detection carries, in one shape. `measurement` and `comparison`
+ * vary by detection type; see docs/risk.md.
+ */
+export interface RiskEvidence {
+  engine_version: number;
+  detection_type: DetectionType;
+  entity: { type: RiskEntityType; id: string };
+  baseline: {
+    window: RiskBaselineWindow;
+    start: string;
+    end: string;
+    slot_seconds: number;
+    slots: number;
+    history_slots: number;
+    active_slots: number;
+    requests: number;
+  };
+  observation: { window: RiskObservationWindow; start: string; end: string; requests: number };
+  measurement: Record<string, unknown>;
+  comparison: Record<string, unknown> & { method: string };
+  risk_factors: Array<Partial<RiskFactorRead> & { code: RiskFactorCode; effect: FactorEffect }>;
+}
+
+export interface RiskDetectionRead {
+  detection_type: DetectionType;
+  /** Never "none". */
+  risk_level: RiskLevel;
+  risk_factors: RiskFactorRead[];
+  evidence: RiskEvidence;
+  /** SHA-256 of entity, type, windows and engine version: the deduplication key. */
+  fingerprint: string;
+}
+
+export interface RiskAgentAnalysisRead {
+  entity_type: RiskEntityType;
+  agent_id: string;
+  status: AnalysisStatus;
+  anomaly_state: AnomalyState;
+  risk_level: RiskLevel;
+  risk_factors: RiskFactorRead[];
+  insufficient_reasons: InsufficientReason[];
+  /** null when history is insufficient: a baseline is never fabricated. */
+  baseline_statistics: RiskBaselineStatisticsRead | null;
+  observation: RiskObservationRead;
+  behaviour: RiskAgentBehaviourRead;
+  checks: RiskCheckRead[];
+  detections: RiskDetectionRead[];
+}
+
+/** GET /organizations/{id}/risk/analysis — computed per request, never stored. */
+export interface RiskAnalysisResponse {
+  organization_id: string;
+  engine_version: number;
+  windows: RiskWindowsRead;
+  items: RiskAgentAnalysisRead[];
+  limit: number;
+  offset: number;
+  count: number;
+  total: number | null;
+}
+
+/** One recorded detection. Immutable: no status to change, no owner, no lifecycle. */
+export interface AnomalyDetectionRead {
+  id: string;
+  organization_id: string;
+  schema_version: number;
+  engine_version: number;
+  detected_at: string;
+  entity_type: RiskEntityType;
+  entity_id: string;
+  detection_type: DetectionType;
+  analysis_status: AnalysisStatus;
+  anomaly_state: AnomalyState;
+  risk_level: RiskLevel;
+  windows: RiskWindowsRead;
+  evidence: RiskEvidence;
+  risk_factors: RiskFactorRead[];
+  fingerprint: string;
+}
+
+/** GET /organizations/{id}/risk/detections — newest first. */
+export interface AnomalyDetectionListResponse {
+  organization_id: string;
+  items: AnomalyDetectionRead[];
+  limit: number;
+  offset: number;
+  count: number;
+  total: number | null;
+}
+
 /* ── Errors ──────────────────────────────────────────────────────────────── */
 
 /**

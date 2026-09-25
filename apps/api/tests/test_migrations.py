@@ -28,7 +28,7 @@ from aicore_api.db.models.organization import Organization
 from aicore_api.db.repositories.rbac import RoleCatalog
 
 CONFIG = Config("alembic.ini")
-EXPECTED_REVISION = "0007_audit_events"
+EXPECTED_REVISION = "0008_anomaly_detections"
 #: Oldest first: each revision's ``down_revision`` must be the one before it.
 EXPECTED_CHAIN = [
     "0001_organizations",
@@ -38,6 +38,7 @@ EXPECTED_CHAIN = [
     "0005_policies",
     "0006_action_firewall",
     "0007_audit_events",
+    "0008_anomaly_detections",
 ]
 
 
@@ -177,6 +178,7 @@ def test_the_application_schema_is_exactly_what_the_models_declare(
         "policy_versions",
         "action_executions",
         "audit_events",
+        "anomaly_detections",
     }
     assert live == expected
     assert {table.name for table in Base.metadata.tables.values()} == expected

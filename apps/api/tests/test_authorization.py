@@ -25,6 +25,7 @@ still pass if somebody added an unprotected route tomorrow.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -103,6 +104,20 @@ EXPECTED_REQUIREMENTS: dict[tuple[str, str], set[Permission]] = {
     ("GET", "/organizations/{organization_id}/monitoring/actions"): {Permission.AUDIT_READ},
     ("GET", "/organizations/{organization_id}/monitoring/policies"): {Permission.AUDIT_READ},
     ("GET", "/organizations/{organization_id}/monitoring/trends"): {Permission.AUDIT_READ},
+    # Risk analysis reads the same trail as two windows and compares them. Phase 10 added
+    # exactly one capability, and only for the one route that writes: computing a finding
+    # is a read of rows the caller can already read (``security.read``), while *recording*
+    # one is a durable claim about an agent, so it is its own grant
+    # (``security.create``) held by the owner and the security administrator — never by
+    # the analyst.
+    ("GET", "/organizations/{organization_id}/risk/agents"): {Permission.SECURITY_READ},
+    ("GET", "/organizations/{organization_id}/risk/agents/{agent_id}"): {Permission.SECURITY_READ},
+    ("GET", "/organizations/{organization_id}/risk/detections"): {Permission.SECURITY_READ},
+    (
+        "GET",
+        "/organizations/{organization_id}/risk/detections/{detection_id}",
+    ): {Permission.SECURITY_READ},
+    ("POST", "/organizations/{organization_id}/risk/analysis"): {Permission.SECURITY_CREATE},
 }
 
 TENANT_ROUTES = list(EXPECTED_REQUIREMENTS)
@@ -114,7 +129,8 @@ ITEM_ROUTES = [
     route
     for route in TENANT_ROUTES
     if any(
-        f"{{{name}}}" in route[1] for name in ("asset_id", "agent_id", "identity_id", "policy_id")
+        f"{{{name}}}" in route[1]
+        for name in ("asset_id", "agent_id", "identity_id", "policy_id", "detection_id")
     )
 ]
 
@@ -130,7 +146,7 @@ PROTECTED_ROUTES = [*TENANT_ROUTES, ("GET", "/me")]
 def _url(path: str, organization_id: uuid.UUID, item_id: uuid.UUID | None = None) -> str:
     """Render a route template, filling in an item id when the route names one."""
     rendered = path.replace("{organization_id}", str(organization_id))
-    for placeholder in ("asset_id", "agent_id", "identity_id", "policy_id"):
+    for placeholder in ("asset_id", "agent_id", "identity_id", "policy_id", "detection_id"):
         rendered = rendered.replace(f"{{{placeholder}}}", str(item_id or uuid.uuid4()))
     return rendered
 
@@ -154,7 +170,26 @@ def _sweep(
     policy_route = "/policies" in path
     evaluate_route = path.endswith("/policies/evaluate")
     execute_route = path.endswith("/actions/execute")
+    analysis_route = path.endswith("/risk/analysis")
     body: dict[str, Any] | None = None
+    if analysis_route:
+        # The one POST whose query string is also validated, because the window it records
+        # must be explicit: a stated interval, hour-aligned here so the sweep is arithmetic
+        # rather than "whatever the clock did". The body names an agent this organization
+        # does not have, so a permitted caller gets a 404 about the target — which is the
+        # distinction the sweep is looking for.
+        end = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        return client.request(
+            method,
+            _url(path, organization_id, item_id),
+            json={"agent_id": str(uuid.uuid4())},
+            params={
+                "window": "custom",
+                "start_time": (end - timedelta(hours=1)).isoformat(),
+                "end_time": end.isoformat(),
+                "baseline": "7d",
+            },
+        )
     if method == "POST":
         if execute_route:
             # Well-formed like the rest: a registered action, a target this
@@ -422,6 +457,10 @@ def test_a_security_admin_gets_security_permissions_and_nothing_wider(
         Permission.USER_READ.value,
         Permission.AUDIT_READ.value,
         Permission.SECURITY_READ.value,
+        # Phase 10: the one write the security administrator makes — recording a finding
+        # the engine computed. It is the same role that already edits policies, and the
+        # same capability the owner holds; no other role records anything.
+        Permission.SECURITY_CREATE.value,
         Permission.POLICY_READ.value,
         Permission.POLICY_CREATE.value,
         Permission.POLICY_UPDATE.value,

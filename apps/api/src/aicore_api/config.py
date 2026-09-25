@@ -63,6 +63,32 @@ class Settings(BaseSettings):
     # principal was established. See docs/authentication.md.
     auth_provider: Literal["api_token"] = "api_token"
 
+    # ── Anomaly and risk analysis (Phase 10) ─────────────────────────────────
+    # The thresholds a behavioural comparison uses. They are configuration rather than
+    # request parameters on purpose: a caller may choose *which* interval to analyse —
+    # that is what the observation window is for — but never the bound it is measured
+    # against, so tuning the detector is not something a request can attempt. Each one is
+    # a floor on evidence as much as a cut-off, and each is documented in docs/risk.md.
+    #
+    #   risk_deviation_multiple   how many baseline standard deviations a rate must move
+    #   risk_extreme_multiple     when a deviation is "far outside" for a higher level
+    #   risk_rate_change_ratio    the multiple of the baseline mean also required
+    #   risk_min_baseline_buckets hourly samples a rate comparison needs
+    #   risk_min_baseline_events  baseline events before any rate is compared
+    #   risk_min_ratio_samples    baseline buckets with a defined ratio (failure, denial)
+    #   risk_min_observed_samples observed events before a ratio is computed at all
+    #   risk_min_distinct_hours   clock hours the baseline must cover
+    #   risk_min_novel_occurrences  occurrences of a first-use action/resource to report
+    risk_deviation_multiple: Annotated[float, Field(ge=0, le=10)] = 2.0
+    risk_extreme_multiple: Annotated[float, Field(ge=1, le=100)] = 3.0
+    risk_rate_change_ratio: Annotated[float, Field(gt=1, le=100)] = 2.0
+    risk_min_baseline_buckets: Annotated[int, Field(ge=1, le=720)] = 12
+    risk_min_baseline_events: Annotated[int, Field(ge=1, le=1_000_000)] = 20
+    risk_min_ratio_samples: Annotated[int, Field(ge=1, le=720)] = 8
+    risk_min_observed_samples: Annotated[int, Field(ge=1, le=1_000_000)] = 4
+    risk_min_distinct_hours: Annotated[int, Field(ge=0, le=24)] = 4
+    risk_min_novel_occurrences: Annotated[int, Field(ge=1, le=1_000_000)] = 1
+
     # ── VCS / deployment metadata (informational) ────────────────────────────
     git_commit: str | None = None
 

@@ -1,4 +1,4 @@
-# Database and multi-tenancy (Phases 1–7)
+# Database and multi-tenancy (Phases 1–10)
 
 Phase 1 added the PostgreSQL foundation and the tenant boundary every later phase
 builds on. Phase 2 adds the identity and access tables that turn that boundary
@@ -7,14 +7,19 @@ permissions, role-permission grants, memberships and API tokens**. Phase 3 added
 the inventory (**assets**), Phase 4 the agent registry (**agents**) that gives one
 kind of asset a stable identity, Phase 6 the policy record (**policies** and
 **policy_versions**): the identity and life of a policy, and its append-only
-history of definitions, and Phase 7 the execution ledger (**action_executions**) that
+history of definitions, Phase 7 the execution ledger (**action_executions**) that
 makes a retried request return the recorded answer instead of running an action
-twice.
+twice, Phase 8 the audit trail (**audit_events**), and Phase 10 the detection
+records (**anomaly_detections**) that make a repeated assessment of the same window
+return the recorded answer instead of writing a second one.
 
 Models, tools, data sources, events and incidents still do not exist as separate
-tables. What exists is the set of conventions and the isolation mechanism they
-will inherit — plus the callers who will reach them, and the records they will
-reach.
+tables, and Phase 9 added none: monitoring counts the trail. What a later phase
+would need for incidents is not here, and the one table Phase 10 adds is a record
+of an *assessment* — evidence, a status and a level — not of an event that
+anybody acted on. What exists is the set of conventions and the isolation
+mechanism they inherit — plus the callers who will reach them, and the records
+they will reach.
 
 ## The tenant model
 
@@ -378,6 +383,37 @@ on purpose, and its absence is the schema's own statement that a row is written 
 covers the inventory, the registry, the policies and the ledger: an unscoped statement is
 refused before PostgreSQL sees it.
 
+## The detection records table (Phase 10)
+
+`aicore.anomaly_detections` holds one row per recorded assessment: the entity, both
+windows, the conclusion (`status`, `anomaly`, `risk_level`, `detection_type`) and the
+typed `evidence` and `factors` that justify it. `docs/risk.md` is the full reference;
+this section is the schema half of it. The row is a *record of a comparison*, never a
+claim about intent, and nothing in the platform reads it in order to act.
+
+| Constraint | Why |
+|---|---|
+| `uq_anomaly_detections_identity` | `(organization_id, entity_type, entity_id, observation_start, observation_end, baseline_start, baseline_end, schema_version)`. The assessment is its identity, so re-assessing a closed window cannot produce a second row — determinism is enforced by the database, not by a handler that checked first |
+| `ck_anomaly_detections_baseline_precedes_observation` | `baseline_end <= observation_start`. The phase's central invariant as data: a baseline that overlapped its observation would be partly a comparison against itself, and the column pair is the only place that can be guaranteed for rows written by anything |
+| `ck_anomaly_detections_anomaly_matches_status`, `…_level_matches_anomaly`, `…_type_matches_status`, `…_factors_present_when_deviating` | The conclusion cannot contradict itself: `deviating` is an anomaly with a type and at least one factor and never level `none`; anything else is level `none` with no factors |
+| `ck_anomaly_detections_status_valid`, `…_risk_level_valid`, `…_detection_type_valid`, `…_baseline_window_valid`, `…_entity_type_valid`, `…_schema_version_supported` | Every vocabulary is a closed `CHECK`: a value the engine cannot produce cannot be stored by a data fix either |
+| `ck_anomaly_detections_baseline_not_empty`, `…_observation_not_empty`, `…_observation_bounded`, `…_baseline_span_matches_window` | A window has a positive span, an observation is at most the documented maximum, and a named baseline is exactly as long as its name says |
+| `ck_anomaly_detections_evidence_is_an_object`, `…_factors_are_an_array`, `…_evidence_bounded`, `…_factors_bounded` | The two JSON columns are shaped and capped in the schema as well as in the code, so an oversized or wrongly shaped record cannot be stored |
+| `organization_id` → `organizations` (**RESTRICT**) | As everywhere: removing a tenant is an operational procedure, never a side effect of a `DELETE` |
+| `entity_id` **has no foreign key** | A detection describes an agent that may since have been deleted; the assessment stays, exactly as the trail keeps its `resource_id` |
+
+The same two triggers Phase 8 installed on the trail — row-level for `UPDATE`/`DELETE`,
+statement-level for `TRUNCATE` — call a function that refuses unless the transaction has
+asked for an exception with `SET LOCAL aicore.risk_retention = '<reason>'`. `UPDATE` is
+refused even then. A record of an assessment that could be rewritten afterwards would be a
+record of what somebody wished had been found.
+
+The table has no `updated_at`: `TimestampMixin` is absent on purpose, and its absence is the
+schema's own statement that a row is written once — the one write the phase performs. It
+inherits `TenantOwnedMixin`, so the tenancy guard covers it as it covers the trail, and
+three indexes (`organization_id`; `(organization_id, detected_at, id)`;
+`(organization_id, entity_id, detected_at)`) are what the two read patterns use.
+
 ## Migrations
 
 Alembic, as a **dev dependency** (`apps/api/pyproject.toml`). The API runtime
@@ -395,6 +431,7 @@ database/migrations/versions/
   0005_policies.py              # Phase 6: the policy record + the four policy permissions
   0006_action_firewall.py       # Phase 7: the idempotency ledger + action.execute and its target
   0007_audit_events.py          # Phase 8: the append-only audit trail + its guard triggers
+  0008_anomaly_risk.py          # Phase 10: the detection records + security.create's grant
 ```
 
 ```bash

@@ -23,6 +23,11 @@ and this table still records no actor and no refusal.
 Keep the per-type distinction in ``core/assets.py``, not here: assets of different
 types share one table on purpose (see ``db/models/asset.py``).
 
+Phase 10 adds ``anomaly_detections``: one durable assessment of one agent over one
+observation window against one stated baseline — the level its factors reached and the
+measurements they were read from. It sits next to the trail rather than inside it (Phase
+8's vocabulary is closed), it is append-only, and nothing in it acts on what it records.
+
 Phase 8 adds ``audit_events``: one append-only row per security-relevant event —
 who caused it (as the server resolved them), what was decided, what came of it, and
 which request it belonged to. It is written by
@@ -34,6 +39,7 @@ from __future__ import annotations
 
 from aicore_api.db.models.action_execution import ActionExecution
 from aicore_api.db.models.agent import Agent
+from aicore_api.db.models.anomaly_detection import AnomalyDetection
 from aicore_api.db.models.api_token import ApiToken
 from aicore_api.db.models.asset import Asset
 from aicore_api.db.models.audit_event import AuditEvent
@@ -53,6 +59,7 @@ __all__ = [
     "SLUG_MAX_LENGTH",
     "ActionExecution",
     "Agent",
+    "AnomalyDetection",
     "ApiToken",
     "Asset",
     "AuditEvent",

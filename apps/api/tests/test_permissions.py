@@ -347,6 +347,9 @@ EXPECTED_ROLE_MATRIX: dict[RoleCode, set[Permission]] = {
         Permission.USER_READ,
         Permission.AUDIT_READ,
         Permission.SECURITY_READ,
+        # Phase 10: recording a finding is security work, so the security administrator
+        # records one; an analyst reads findings and never records them.
+        Permission.SECURITY_CREATE,
         Permission.ASSET_READ,
         Permission.ASSET_UPDATE,
         Permission.AGENT_READ,
@@ -416,6 +419,11 @@ def test_no_role_holds_a_permission_for_a_resource_that_does_not_exist() -> None
             Permission.AGENT_CREATE,
             Permission.AGENT_DELETE,
             Permission.POLICY_CREATE,
+            # Phase 10: recording a risk finding creates an append-only record, and the
+            # roles that may do it are the owner and the security administrator — the
+            # second of which is not in the administration set below, so the capability is
+            # named here rather than implied by a role.
+            Permission.SECURITY_CREATE,
         } or role_code in {
             RoleCode.OWNER,
             RoleCode.ADMIN,

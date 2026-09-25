@@ -1060,6 +1060,318 @@ export interface MonitoringTrendResponse {
   count: number;
 }
 
+/* ── Risk ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Phase 10: baselines, deviations and assessments over the audit trail.
+ *
+ * A deviation is a statement about data — these numbers are outside these bounds, over these
+ * two intervals — and never a claim about intent. There is no score, no severity and no
+ * confidence anywhere below: a level is a value of a closed vocabulary, assigned by a
+ * published table over factor counts, and every number it was computed from is in the same
+ * response.
+ */
+
+/** What a baseline can be built for. One value today, and a closed vocabulary. */
+export type EntityType = "agent";
+
+/**
+ * The seven deviations this engine can report.
+ *
+ * The first four are *strong* — a rate moved outside its own baseline — and the last three
+ * are *weak*: a first use, which is context rather than magnitude. Nothing here is a verdict.
+ */
+export type DetectionType =
+  | "action_rate_spike"
+  | "action_rate_drop"
+  | "failure_rate_spike"
+  | "denial_rate_spike"
+  | "novel_action"
+  | "novel_resource"
+  | "unusual_time";
+
+/** The six quantities measured, one per dimension of an assessment. */
+export type RiskMetric =
+  | "action_rate"
+  | "failure_rate"
+  | "denial_rate"
+  | "novel_action"
+  | "novel_resource"
+  | "unusual_time";
+
+/**
+ * How much corroborated evidence an assessment carries.
+ *
+ * `none` is a value, not a null: it is what a recorded assessment with no factors keeps, so
+ * "checked and consistent" stays distinguishable from "never checked".
+ */
+export type RiskLevel = "none" | "low" | "medium" | "high" | "critical";
+
+/** Where an assessment ended: deviating, consistent, or not measurable. */
+export type AssessmentStatus = "insufficient_data" | "within_baseline" | "deviating";
+
+/** One dimension's outcome: measured, deviating, or refused with a reason. */
+export type DimensionStatus = "measured" | "deviation" | "insufficient_data";
+
+/** The baseline spans. Each ends exactly where the observation begins. */
+export type BaselineWindow = "24h" | "7d" | "14d" | "30d";
+
+/**
+ * Why a dimension could not be measured.
+ *
+ * The vocabulary exists so that "we did not look" is never rendered as "we looked and it was
+ * zero": the reason is a closed value and it accompanies no numbers.
+ */
+export type InsufficiencyReason =
+  | "baseline_too_short"
+  | "baseline_empty"
+  | "baseline_no_signal"
+  | "baseline_insufficient_samples"
+  | "observation_insufficient_samples"
+  | "baseline_no_hours"
+  | "baseline_no_history";
+
+/** What a factor's evidence names: an action, a resource, or a clock hour. */
+export type FactorItemKind = "action" | "resource" | "hour";
+
+/** An interval a response measured, as the server resolved it. */
+export interface RiskWindowRead {
+  /** Inclusive lower bound, in UTC. */
+  start: string;
+  /** Inclusive upper bound, in UTC. */
+  end: string;
+}
+
+/**
+ * The thresholds the assessment was computed with.
+ *
+ * Every value is server-side configuration: a client reads them and cannot set one. They are
+ * published because a bound whose multiple is unknown cannot be checked.
+ */
+export interface RiskParametersRead {
+  /** Baseline standard deviations to a bound. */
+  deviation_multiple: number;
+  /** Multiple of a bound that counts as extreme. */
+  extreme_multiple: number;
+  /** Multiple of the baseline mean also required before a rate may deviate. */
+  rate_change_ratio: number;
+  min_baseline_buckets: number;
+  min_baseline_events: number;
+  min_ratio_samples: number;
+  min_observed_samples: number;
+  min_distinct_hours: number;
+  min_novel_occurrences: number;
+}
+
+/** What the observed window contained for this entity, and which window it was. */
+export interface RiskObservationRead {
+  start: string;
+  end: string;
+  /** Action-pipeline events attributed to this entity in the window. */
+  events: number;
+  requests: number;
+  executions: number;
+  failures: number;
+  denials: number;
+  approval_required: number;
+  replays: number;
+  /** Executions that finished: successes + failures. */
+  completed: number;
+  /** Distinct action identifiers used. */
+  action_count: number;
+  /** Distinct resources addressed. */
+  resource_count: number;
+  /** UTC clock hours with activity, ascending. */
+  active_hours: number[];
+  /** How long the window is, in hours — the rate's divisor. */
+  span_hours: number;
+}
+
+/** What the observation was compared against: the same measurement, earlier. */
+export interface RiskBaselineRead {
+  window: BaselineWindow;
+  start: string;
+  end: string;
+  events: number;
+  requests: number;
+  executions: number;
+  failures: number;
+  denials: number;
+  approval_required: number;
+  completed: number;
+  action_count: number;
+  resource_count: number;
+  /** Full hourly buckets that became samples — the number behind every bound. */
+  hourly_buckets: number;
+  active_hours: number[];
+}
+
+/** One metric's examination, whether or not it deviated. */
+export interface RiskDimensionRead {
+  metric: RiskMetric;
+  status: DimensionStatus;
+  /** Why the metric could not be measured; null when it was measured. */
+  reason: InsufficiencyReason | null;
+  /** The measured quantity, in the metric's own unit; null when not measured. */
+  observed: number | null;
+  baseline_mean: number | null;
+  baseline_stddev: number | null;
+  upper_bound: number | null;
+  lower_bound: number | null;
+  threshold_multiple: number | null;
+  baseline_samples: number;
+  observation_samples: number;
+  /** The factors this dimension produced; empty when it did not deviate. */
+  detection_types: DetectionType[];
+}
+
+/**
+ * One named piece of a factor's evidence.
+ *
+ * `value` is an action identifier, a resource identifier or a clock hour depending on
+ * `kind`; `resource_type` is set only for a resource, because two kinds can share one. None
+ * of it is a payload and none of it is a client's.
+ */
+export interface RiskFactorItemRead {
+  kind: FactorItemKind;
+  value: string;
+  occurrences: number;
+  resource_type: string | null;
+}
+
+/**
+ * One deviation, with the numbers it was computed from.
+ *
+ * Rate factors carry the baseline statistics and the bound that was crossed; first-use
+ * factors carry the threshold count that applied and the identifiers themselves. Both carry
+ * their sample counts, because a rate computed from three events and one computed from three
+ * hundred should not look alike.
+ */
+export interface RiskFactorRead {
+  type: DetectionType;
+  metric: RiskMetric;
+  observed: number;
+  baseline_mean: number | null;
+  baseline_stddev: number | null;
+  upper_bound: number | null;
+  lower_bound: number | null;
+  threshold_multiple: number | null;
+  threshold_occurrences: number | null;
+  baseline_samples: number;
+  observation_samples: number;
+  items: RiskFactorItemRead[];
+}
+
+/**
+ * `GET /organizations/{organization_id}/risk/agents/{agent_id}`.
+ *
+ * Every dimension is present whether or not it produced a factor, so the response says what
+ * was looked for and not only what was found. `status`, `anomaly` and `risk_level` are the
+ * conclusion; `dimensions`, `factors` and `parameters` are everything it was computed from.
+ */
+export interface RiskAssessmentRead {
+  organization_id: string;
+  entity_type: EntityType;
+  entity_id: string;
+  status: AssessmentStatus;
+  /** Whether any factor fired. A deviation, never a claim about intent. */
+  anomaly: boolean;
+  risk_level: RiskLevel;
+  /** The head of the ordered factors; null when none fired. */
+  detection_type: DetectionType | null;
+  observation: RiskObservationRead;
+  baseline: RiskBaselineRead;
+  dimensions: RiskDimensionRead[];
+  factors: RiskFactorRead[];
+  parameters: RiskParametersRead;
+  generated_at: string;
+}
+
+/** The intervals a recorded assessment compared. */
+export interface RiskDetectionWindowRead {
+  start: string;
+  end: string;
+}
+
+/** The measurements a recorded assessment rests on, stored with it and returned with it. */
+export interface RiskEvidenceRead {
+  observation: RiskObservationRead;
+  baseline: RiskBaselineRead;
+  parameters: RiskParametersRead;
+  dimensions: RiskDimensionRead[];
+}
+
+/** One stored assessment, exactly as it was recorded. */
+export interface RiskDetectionRead {
+  id: string;
+  organization_id: string;
+  detected_at: string;
+  entity_type: EntityType;
+  entity_id: string;
+  status: AssessmentStatus;
+  anomaly: boolean;
+  risk_level: RiskLevel;
+  detection_type: DetectionType | null;
+  observation: RiskDetectionWindowRead;
+  baseline: RiskDetectionWindowRead;
+  baseline_window: BaselineWindow;
+  schema_version: number;
+  evidence: RiskEvidenceRead;
+  factors: RiskFactorRead[];
+}
+
+/** `GET /organizations/{organization_id}/risk/agents`: one page of assessments. */
+export interface RiskAgentListResponse {
+  organization_id: string;
+  /** The observed interval every item in this page was measured over. */
+  observation: RiskWindowRead;
+  baseline_window: BaselineWindow;
+  generated_at: string;
+  /** Ordered the way the registry lists agents, never by what was found. */
+  items: RiskAssessmentRead[];
+  limit: number;
+  offset: number;
+  count: number;
+  /** Registered agents; null unless the request asked for it. */
+  total: number | null;
+}
+
+/** `GET /organizations/{organization_id}/risk/detections`: one page of records, newest first. */
+export interface RiskDetectionListResponse {
+  organization_id: string;
+  items: RiskDetectionRead[];
+  limit: number;
+  offset: number;
+  count: number;
+  total: number | null;
+}
+
+/**
+ * `POST /organizations/{organization_id}/risk/analysis`: which agent to assess.
+ *
+ * One field, and it is an identifier. The observation window comes from the query string and
+ * must be explicit; the baseline is a named span; every analytical value is derived
+ * server-side, so a body that tries to add one is refused rather than ignored.
+ */
+export interface RiskAnalysisRequest {
+  agent_id: string;
+}
+
+/**
+ * `POST /organizations/{organization_id}/risk/analysis`: the assessment, and whether it was
+ * recorded.
+ *
+ * `recorded` is false when the identical assessment was already stored — same agent, same
+ * observation window, same baseline — so re-asking a closed window is safe, and the response
+ * says which of the two happened.
+ */
+export interface RiskAnalysisResponse {
+  organization_id: string;
+  recorded: boolean;
+  detection: RiskDetectionRead;
+  assessment: RiskAssessmentRead;
+}
+
 /* ── Errors ──────────────────────────────────────────────────────────────── */
 
 /**

@@ -11,8 +11,12 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
+
+from audit_fixture import AuditFactory, AuditScene
 
 # ── Environment (must run before `aicore_api` is imported) ────────────────────
 #: Unreachable on purpose (port 1) — readiness must fail without a live database.
@@ -44,10 +48,11 @@ from aicore_api.db.base import APP_SCHEMA  # noqa: E402
 from aicore_api.db.session import dispose_engine  # noqa: E402
 from aicore_api.main import create_app  # noqa: E402
 from assets_fixture import AssetFactory  # noqa: E402
-from audit_fixture import AuditFactory, AuditScene  # noqa: E402
+from audit_fixture import delete_events  # noqa: E402
 from identity_fixture import Identity, IdentityFactory  # noqa: E402
 from monitoring_fixture import MonitoringScene  # noqa: E402
 from policies_fixture import PolicyFactory  # noqa: E402
+from risk_fixture import ForeignRiskTenant, RiskScene, delete_detections  # noqa: E402
 from tenant_fixture import SampleBase, TenantScopedSample  # noqa: E402
 
 # The fixture table is registered with the isolation guard for the whole session,
@@ -375,6 +380,61 @@ def monitoring(audit: AuditScene) -> Iterator[MonitoringScene]:
         # The audit scene's own teardown removes the trail; nothing extra is created
         # except the seeded rows, which live in that trail.
         scene.purge()
+
+
+@pytest.fixture
+def risk(monitoring: MonitoringScene) -> Iterator[RiskScene]:
+    """Phase 10's fixture: the monitoring scene, assessed by the risk engine.
+
+    Risk analysis compares two windows of the same trail monitoring measures, so its tests
+    need everything the monitoring scene has — a tenant, a registry, an action pipeline, a
+    seeded trail — plus the five risk routes and direct reads of the detection table. This
+    wraps that scene rather than rebuilding it, and adds a clock captured once, so every
+    window a test asks for is arithmetic against one instant.
+    """
+    scene = RiskScene(monitoring=monitoring)
+    try:
+        yield scene
+    finally:
+        # The detections go first — they are this phase's only writes — and the monitoring
+        # scene then removes the trail and the audit scene everything else, in its own order.
+        scene.purge()
+
+
+@pytest.fixture
+def foreign_risk(
+    identity_factory: IdentityFactory, authenticate: Any, integration_engine: Engine
+) -> Iterator[ForeignRiskTenant]:
+    """A second tenant, with a real registry and a real trail, for boundary tests.
+
+    Cross-tenant assertions are worth more against a tenant that exists than against an
+    invented identifier, so this provisions a committed owner in a committed organization
+    and hands over a client that speaks as them. Teardown removes the foreign detections and
+    the foreign trail — both tenant-owned tables — before the identity factory drops the
+    tenant itself, which the foreign keys would otherwise refuse.
+    """
+    identity = identity_factory(role_code="owner")
+    try:
+        yield ForeignRiskTenant(
+            organization_id=identity.organization_id,
+            identity=identity,
+            authenticate=authenticate,
+            engine=integration_engine,
+            now=datetime.now(UTC).replace(minute=0, second=0, microsecond=0),
+        )
+    finally:
+        delete_detections(integration_engine, identity.organization_id, "phase 10 test teardown")
+        delete_events(integration_engine, identity.organization_id, "phase 10 test teardown")
+
+
+@pytest.fixture
+def foreign_agent(foreign_risk: ForeignRiskTenant) -> uuid.UUID:
+    """An agent that really exists, in the other organization's registry.
+
+    Registered through the other tenant's own API, so the identifier a boundary test uses is
+    one a real registry really holds rather than one a test invented.
+    """
+    return foreign_risk.register_agent()
 
 
 @pytest.fixture

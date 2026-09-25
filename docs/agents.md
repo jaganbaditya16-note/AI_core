@@ -368,8 +368,10 @@ Stated plainly, because a registry that overstates itself is worse than a small 
 - **No execution and no runtime control.** Nothing starts, stops, suspends,
   contains or interrupts an agent. `status` is a record.
 - **No permission engine, no policy engine, no approvals, no kill switch, no
-  monitor, no anomaly detection.** Those are other phases' work, and no endpoint,
-  permission or type in this build pretends otherwise. Phase 7 added an action
+  monitor of the agent, no anomaly detection in this registry.** Those are other
+  phases' work — Phase 9 counts the trail and Phase 10 compares it against an agent's
+  own baseline, and neither can start, stop, contain or interrupt one — and no endpoint,
+  permission or type here pretends otherwise. Phase 7 added an action
   firewall, and the distinction it draws is the registry's own line: `/actions/execute`
   runs an *action* from a closed catalogue (one read-only assessment today), and
   nothing anywhere executes, starts, stops, contains or interrupts an *agent* — see

@@ -7,9 +7,11 @@
 > answers *how much of it happened* — in a bounded window, per agent, per action, over
 > time — with arithmetic over that record and nothing else. There is no baseline, no
 > threshold, no score, no severity, no "normal", no incident, no alert, no notification and
-> no automated response anywhere in this phase. A spike is a bigger number, and this build
+> no automated response anywhere in this phase. A spike is a bigger number, and this phase
 > says nothing more about it than that: deciding whether a number is *bad* is a different
-> subject with different vocabulary, and it is not implemented here.
+> subject with different vocabulary, and monitoring was not extended to do it. Phase 10
+> carries a separate comparison — a window against a baseline — in a different module, with
+> its own document and its own rules; this one still only counts.
 >
 > Nor is monitoring a control. It cannot authorize, execute, modify a policy, change a
 > permission or suspend an agent. It reads the trail and reports counts, and it holds no
@@ -275,7 +277,8 @@ and worth repeating: a measurement is a sum over rows the holder can already rea
 role that lacks `audit.read` would hand that role the trail's contents in aggregate. The
 owner and the security administrator read monitoring for the same reason they read the
 trail: oversight. The administrator deliberately does not, and neither does the analyst
-(`security.read` stays reserved for findings, which is a later phase's subject).
+(`security.read` guards Phase 10's risk reads, which are findings rather than counts, and
+monitoring does not touch it).
 
 There is no monitoring write permission because there is no monitoring write: no route
 acknowledges an event, silences a signal, records a measurement or changes a threshold.
@@ -325,8 +328,11 @@ instants, which no sequence of HTTP calls in the present can produce.
 ## Limitations, stated plainly
 
 - **No anomaly detection, no baselines, no thresholds, no scoring, no behavioural
-  profiling.** A number is a number. Nothing here compares two windows, decides what is
-  normal, or ranks anything.
+  profiling in this phase.** A number is a number here: monitoring compares no two windows,
+  decides nothing about what is normal and ranks nothing. The comparison lives next door —
+  Phase 10's engine holds the baseline, the statistics and the level table, and
+  [risk.md](risk.md) is its document; no monitoring module was changed to add it, and
+  monitoring still has no `anomaly`, `risk_level` or `deviation` field.
 - **No incidents, alerts, notifications or webhooks.** A denial is an observed event, and
   remains one. There is no incident table, no severity, no assignment, no workflow and no
   response — nothing in this phase sends anything anywhere.

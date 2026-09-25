@@ -89,9 +89,9 @@ seniority:
 
 | Role | Purpose | Permissions |
 |---|---|---|
-| `owner` | Full administration of the organization it owns | all sixteen |
+| `owner` | Full administration of the organization it owns | every permission in the catalog |
 | `admin` | General organization administration | `organization.read`, `organization.update`, `user.read`, `user.manage`, `role.read`, `asset.read`, `asset.create`, `asset.update`, `asset.delete`, `agent.read`, `agent.create`, `agent.update`, `agent.delete` |
-| `security_admin` | Security, audit, incidents, containment, security configuration | `organization.read`, `user.read`, `audit.read`, `security.read`, `asset.read`, `asset.update`, `agent.read`, `agent.update` |
+| `security_admin` | Security, audit, incidents, containment, security configuration | `organization.read`, `user.read`, `audit.read`, `security.read`, `security.create`, `asset.read`, `asset.update`, `agent.read`, `agent.update` |
 | `ai_admin` | Administration of AI assets, agents and the AI platform | `organization.read`, `user.read`, `asset.read`, `asset.create`, `asset.update`, `agent.read`, `agent.create`, `agent.update` |
 | `analyst` | Read and analyse AI and security information | `organization.read`, `security.read`, `asset.read`, `agent.read` |
 | `viewer` | Read-only access to permitted resources | `organization.read`, `asset.read`, `agent.read` |
@@ -99,11 +99,13 @@ seniority:
 The catalog lives in one place: `aicore_api/core/permissions.py`. It is seeded
 into the database by migration `0002_identity_and_rbac`, and a test compares the
 two copies against the live rows, so a role cannot silently lose a capability in a
-deployment. Phase 3 added the four `asset.*` permissions and Phase 4 the four
-`agent.*` permissions this table now shows; a permission still does not exist for a
+deployment. Phase 3 added the four `asset.*` permissions, Phase 4 the four
+`agent.*` permissions, Phase 6 the four `policy.*` ones, Phase 7 `action.execute`
+and Phase 10 `security.create` — the grant that lets a security administrator
+*record* an assessment the anomaly engine computed, without being able to create
+an asset, an agent, a policy or a member. A permission still does not exist for a
 resource that does not exist, which is why `ai_admin` stewards the inventory and
-its agents without being able to delete either, and why `security_admin` may record
-what it found without being able to create records. There is deliberately no
+its agents without being able to delete either. There is deliberately no
 `agent.execute`, `agent.suspend` or `agent.control`: registering an agent is not the
 same capability as running one, and this build cannot run one.
 
@@ -122,6 +124,7 @@ application code may ask for:
 | `role.manage` | Change which permissions a role grants |
 | `audit.read` | Read the audit trail |
 | `security.read` | Read security findings and posture |
+| `security.create` | Record an assessment the anomaly engine computed |
 | `asset.read` | See the organization's AI inventory |
 | `asset.create` | Register an asset in the inventory |
 | `asset.update` | Change an inventory record |
@@ -141,10 +144,12 @@ See [authorization.md](authorization.md).
 Code asks `require_permission(Permission.USER_READ)`. It never asks *"is this
 user an ADMIN?"* — a role check in a handler is a second, unauditable definition
 of who may do what, and a test scans the application modules to keep them out.
-Some permissions currently guard nothing because their subject does not exist
-yet (`audit.read`, `security.read`: there is no audit record to read, and no
-security finding to see). They are the vocabulary the next phases will enforce,
-they are already visible on `GET /me`, and no endpoint pretends otherwise.
+Every permission in the catalog now guards something: `audit.read` the Phase 8
+trail (and Phase 9's counts over it), `security.read` the Phase 10 risk reads —
+four endpoints that assess an agent against its own history — and
+`security.create` the one recording route (`POST …/risk/analysis`). A permission
+whose subject does not exist still would not be invented; the vocabulary grew only
+when a phase had something to guard with it.
 
 Roles are not permissions, and neither is a superset assumption: `viewer` is a
 subset of every other role, but `security_admin` and `ai_admin` are *incomparable*

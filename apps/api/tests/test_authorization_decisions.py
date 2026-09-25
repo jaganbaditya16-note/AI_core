@@ -591,6 +591,10 @@ PATH_RESOURCES = (
     # entry moved below the others, the sweep would demand ``agent.read`` of a view that
     # is guarded by ``audit.read``.
     ("/monitoring", Resource.AUDIT),
+    # First for the same reason, and one step further: ``/risk/agents`` and
+    # ``/risk/detections`` end with the prefixes of two other resources, and a risk route
+    # addresses ``security`` — the resource the findings belong to.
+    ("/risk", Resource.SECURITY),
     ("/assets", Resource.ASSET),
     ("/agents", Resource.AGENT),
     ("/policies", Resource.POLICY),

@@ -11,9 +11,11 @@
 > resource, with what decision, and what came of it. **The audit trail is not anomaly
 > detection, baseline analysis, incident management or alerting.** It is a record.
 > Phase 9 *reads* it — [monitoring.md](monitoring.md) counts this trail in bounded windows
-> and reports the numbers — and reading to count is all that happens: nothing here judges
-> a number, and everything that would act on one — baselines, anomalies, incidents,
-> alerting, dashboards, containment — belongs to a later phase and does not exist here.
+> and reports the numbers — and Phase 10 reads it too, comparing a window against the same
+> agent's own baseline ([risk.md](risk.md)). Reading is all that happens: nothing here judges
+> a number, the trail has no verdict column and no row is annotated in place, and everything
+> that would act on a finding — incidents, alerting, dashboards, containment — still does not
+> exist.
 
 Phases 5, 6 and 7 *decide*. Phase 8 remembers. It adds one table, one internal writer,
 one read-only endpoint and no new permission: `audit.read` was declared in Phase 2 for
@@ -25,6 +27,8 @@ The invariant the whole build now satisfies:
 DISCOVER → IDENTITY → PERMISSION → POLICY → ACTION FIREWALL → CONTROLLED EXECUTION
                                       → AUDIT EVENT → QUERYABLE SECURITY HISTORY
                                       → MONITORING (Phase 9: the same record, counted)
+                                      → ANOMALY / RISK (Phase 10: compared with a baseline)
+                                      → EVIDENCE + ASSESSMENT (a record, not a response)
 ```
 
 Audit observes. It never authorizes, never decides, never executes and never changes an
@@ -378,10 +382,11 @@ bash scripts/test-db.sh         # empty database → migrations → drift check 
 - **Refusals before admission are not events.** A 403 from a route's permission dependency
   is a refusal of an attempt, not a record of an operation — the trail records what the
   platform did.
-- **No anomaly detection, baselines, alerting, dashboards, incidents, kill switch or
-  containment.** Phase 9 counts this trail — see [monitoring.md](monitoring.md) — and
-  counting is as far as that goes: a number is reported, never judged, and nothing reads
-  the trail automatically in order to act on it.
+- **No alerting, dashboards, incidents, kill switch or containment.** Phase 9 counts this
+  trail — see [monitoring.md](monitoring.md) — and Phase 10 compares a window of it against
+  the same agent's own baseline ([risk.md](risk.md)); both read it, neither writes it, and a
+  number is still reported rather than judged: the trail itself carries no verdict, no row
+  is annotated in place, and nothing reads it automatically in order to act on it.
 - **No SIEM/Kafka/Redis/Elasticsearch integration, no LLM summarization.** The endpoint is
   REST and tenant-scoped, and the trail is queried, not streamed.
 - **One table, one writer, one endpoint.** Assets, agents and policies are the resources

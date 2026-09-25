@@ -147,6 +147,165 @@ EXPECTED_AUDIT_SCHEMAS = {
 #: reports and nothing a client can set. The field names are the contract — `total_events`
 #: is a count of the trail, `execution_health` is two counts and two nullable ratios, and
 #: there is no score, no severity and no status word anywhere among them.
+#: Phase 10's published shapes. Four reads and one recording: every model but the request
+#: is a response, the one request names an agent and nothing else, and no field anywhere is
+#: a score, a severity or a confidence — the level is a value of a closed vocabulary, and
+#: every number it was read from is in the same document.
+EXPECTED_RISK_SCHEMAS = {
+    "RiskWindowRead": {"start", "end"},
+    "RiskParametersRead": {
+        "deviation_multiple",
+        "extreme_multiple",
+        "rate_change_ratio",
+        "min_baseline_buckets",
+        "min_baseline_events",
+        "min_ratio_samples",
+        "min_observed_samples",
+        "min_distinct_hours",
+        "min_novel_occurrences",
+    },
+    "RiskObservationRead": {
+        "start",
+        "end",
+        "events",
+        "requests",
+        "executions",
+        "failures",
+        "denials",
+        "approval_required",
+        "replays",
+        "completed",
+        "action_count",
+        "resource_count",
+        "active_hours",
+        "span_hours",
+    },
+    "RiskBaselineRead": {
+        "window",
+        "start",
+        "end",
+        "events",
+        "requests",
+        "executions",
+        "failures",
+        "denials",
+        "approval_required",
+        "completed",
+        "action_count",
+        "resource_count",
+        "hourly_buckets",
+        "active_hours",
+    },
+    "RiskDimensionRead": {
+        "metric",
+        "status",
+        "reason",
+        "observed",
+        "baseline_mean",
+        "baseline_stddev",
+        "upper_bound",
+        "lower_bound",
+        "threshold_multiple",
+        "baseline_samples",
+        "observation_samples",
+        "detection_types",
+    },
+    "RiskFactorItemRead": {"kind", "value", "occurrences", "resource_type"},
+    "RiskFactorRead": {
+        "type",
+        "metric",
+        "observed",
+        "baseline_mean",
+        "baseline_stddev",
+        "upper_bound",
+        "lower_bound",
+        "threshold_multiple",
+        "threshold_occurrences",
+        "baseline_samples",
+        "observation_samples",
+        "items",
+    },
+    "RiskAssessmentRead": {
+        "organization_id",
+        "entity_type",
+        "entity_id",
+        "status",
+        "anomaly",
+        "risk_level",
+        "detection_type",
+        "observation",
+        "baseline",
+        "dimensions",
+        "factors",
+        "parameters",
+        "generated_at",
+    },
+    "RiskDetectionWindowRead": {"start", "end"},
+    "RiskEvidenceRead": {"observation", "baseline", "parameters", "dimensions"},
+    "RiskDetectionRead": {
+        "id",
+        "organization_id",
+        "detected_at",
+        "entity_type",
+        "entity_id",
+        "status",
+        "anomaly",
+        "risk_level",
+        "detection_type",
+        "observation",
+        "baseline",
+        "baseline_window",
+        "schema_version",
+        "evidence",
+        "factors",
+    },
+    "RiskAgentListResponse": {
+        "organization_id",
+        "observation",
+        "baseline_window",
+        "generated_at",
+        "items",
+        "limit",
+        "offset",
+        "count",
+        "total",
+    },
+    "RiskDetectionListResponse": {
+        "organization_id",
+        "items",
+        "limit",
+        "offset",
+        "count",
+        "total",
+    },
+    "RiskAnalysisRequest": {"agent_id"},
+    "RiskAnalysisResponse": {"organization_id", "recorded", "detection", "assessment"},
+}
+
+#: The risk routes, in the order the document lists them.
+RISK_ROUTES = (
+    "/organizations/{organization_id}/risk/agents",
+    "/organizations/{organization_id}/risk/agents/{agent_id}",
+    "/organizations/{organization_id}/risk/detections",
+    "/organizations/{organization_id}/risk/detections/{detection_id}",
+    "/organizations/{organization_id}/risk/analysis",
+)
+
+#: Words that would make a response read as a judgement about its subject. None of them is a
+#: field name or a parameter name anywhere in this phase.
+RISK_VERDICT_WORDS = (
+    "score",
+    "severity",
+    "confidence",
+    "health",
+    "verdict",
+    "incident",
+    "alert",
+    "priority",
+    "weight",
+    "intent",
+)
+
 EXPECTED_MONITORING_SCHEMAS = {
     "MonitoringWindowRead": {"name", "start", "end"},
     "ExecutionHealthRead": {"completed", "succeeded", "failed", "success_rate", "failure_rate"},
@@ -717,6 +876,84 @@ def test_the_monitoring_contract_is_a_read_of_the_trail(client: TestClient) -> N
                 assert word not in field.lower(), (name, field, word)
 
 
+def test_the_risk_contract_is_two_windows_and_a_record(client: TestClient) -> None:
+    """Four reads and one recording, over a window the server resolves and a named baseline.
+
+    The document is a client's whole view of this phase, so this is where its boundaries are
+    checkable from outside: every read is a ``GET``, the one ``POST`` accepts an identifier,
+    the windows and baselines are enumerated rather than described, and no published field
+    name judges the agent it is about.
+    """
+    document = client.get("/openapi.json").json()
+    schemas = document["components"]["schemas"]
+    paths = document["paths"]
+
+    for name, fields in EXPECTED_RISK_SCHEMAS.items():
+        assert name in schemas, name
+        assert set(schemas[name]["properties"]) == fields, name
+
+    risk_paths = {path: methods for path, methods in paths.items() if "/risk/" in path}
+    assert set(risk_paths) == set(RISK_ROUTES)
+    for path, methods in risk_paths.items():
+        assert {"401", "403", "404", "422"} <= set(next(iter(methods.values()))["responses"]), path
+    for path in RISK_ROUTES[:4]:
+        assert set(risk_paths[path]) == {"get"}, path
+    assert set(risk_paths[RISK_ROUTES[4]]) == {"post"}
+    assert {"200", "201"} <= set(risk_paths[RISK_ROUTES[4]]["post"]["responses"])
+
+    # The one request model, and the fact that it is the only one this phase has.
+    requests = [name for name in schemas if name.startswith("Risk") and "Request" in name]
+    assert requests == ["RiskAnalysisRequest"]
+    assert schemas["RiskAnalysisRequest"]["additionalProperties"] is False
+
+    # The vocabularies a client switches on are enumerated, not left as free strings.
+    assert set(schemas["EntityType"]["enum"]) == {"agent"}
+    assert set(schemas["DetectionType"]["enum"]) == {
+        "action_rate_spike",
+        "action_rate_drop",
+        "failure_rate_spike",
+        "denial_rate_spike",
+        "novel_action",
+        "novel_resource",
+        "unusual_time",
+    }
+    assert set(schemas["RiskMetric"]["enum"]) == set(schemas["DetectionType"]["enum"]) - {
+        "action_rate_spike",
+        "action_rate_drop",
+        "failure_rate_spike",
+        "denial_rate_spike",
+    } | {"action_rate", "failure_rate", "denial_rate"}
+    assert set(schemas["RiskLevel"]["enum"]) == {"none", "low", "medium", "high", "critical"}
+    assert set(schemas["AssessmentStatus"]["enum"]) == {
+        "insufficient_data",
+        "within_baseline",
+        "deviating",
+    }
+    assert set(schemas["DimensionStatus"]["enum"]) == {
+        "measured",
+        "deviation",
+        "insufficient_data",
+    }
+    assert set(schemas["BaselineWindow"]["enum"]) == {"24h", "7d", "14d", "30d"}
+    assert set(schemas["FactorItemKind"]["enum"]) == {"action", "resource", "hour"}
+    # The insufficiency vocabulary is closed too: a dimension that could not be measured
+    # names one of these rather than reporting zeros.
+    assert len(schemas["InsufficiencyReason"]["enum"]) == 7
+
+    # No field and no parameter is a verdict, and no route lets a caller name one.
+    for name, fields in EXPECTED_RISK_SCHEMAS.items():
+        for field in fields:
+            if field in {"threshold_multiple", "threshold_occurrences", "assessment_status"}:
+                continue
+            for word in RISK_VERDICT_WORDS:
+                assert word not in field.lower(), (name, field, word)
+    for path in RISK_ROUTES:
+        operation = next(iter(paths[path].values()))
+        for parameter in operation.get("parameters", []):
+            for word in RISK_VERDICT_WORDS:
+                assert word not in parameter["name"].lower(), (path, parameter["name"], word)
+
+
 def test_the_execution_route_documents_every_refusal(client: TestClient) -> None:
     """The one route that can execute something says how it fails, in the document.
 
@@ -767,6 +1004,7 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         | {field for fields in EXPECTED_ACTION_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_AUDIT_SCHEMAS.values() for field in fields}
         | {field for fields in EXPECTED_MONITORING_SCHEMAS.values() for field in fields}
+        | {field for fields in EXPECTED_RISK_SCHEMAS.values() for field in fields}
     )
     for field in sorted(mirrored):
         assert field in source, f"packages/types is missing '{field}'"
@@ -814,6 +1052,21 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "MonitoringDecisionsRead",
         "MonitoringPolicyLifecycleRead",
         "TrendBucket",
+        "RiskWindowRead",
+        "RiskParametersRead",
+        "RiskObservationRead",
+        "RiskBaselineRead",
+        "RiskDimensionRead",
+        "RiskFactorItemRead",
+        "RiskFactorRead",
+        "RiskAssessmentRead",
+        "RiskDetectionWindowRead",
+        "RiskEvidenceRead",
+        "RiskDetectionRead",
+        "RiskAgentListResponse",
+        "RiskDetectionListResponse",
+        "RiskAnalysisRequest",
+        "RiskAnalysisResponse",
     ):
         assert f"interface {name} " in source, f"packages/types is missing '{name}'"
 
@@ -842,6 +1095,15 @@ def test_shared_typescript_mirror_matches_schemas() -> None:
         "AuditOutcome",
         "MonitoringWindow",
         "MonitoringInterval",
+        "EntityType",
+        "DetectionType",
+        "RiskMetric",
+        "RiskLevel",
+        "AssessmentStatus",
+        "DimensionStatus",
+        "BaselineWindow",
+        "InsufficiencyReason",
+        "FactorItemKind",
     ):
         assert f"export type {name} =" in source, f"packages/types is missing '{name}'"
     for value in (

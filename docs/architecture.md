@@ -201,6 +201,42 @@ the boundary, because that is a deployment defect rather than a caller's mistake
 
 Design and limitations: [authorization.md](authorization.md).
 
+## What Phase 10 adds
+
+The layer above the count: risk compares what an agent did over one window with what it had
+done over an earlier one, and reports the disagreement as evidence.
+
+```
+DISCOVER → IDENTITY → PERMISSION → POLICY → ACTION FIREWALL → CONTROLLED EXECUTION
+                    → AUDIT EVENT → MONITORING → ANOMALY / RISK → EVIDENCE + ASSESSMENT
+```
+
+Seven modules, and the split is the argument. `core/risk.py` holds the vocabulary, the
+window resolvers, the statistics and the level table as pure functions — no database, no
+clock, no request — so the parts that can be wrong subtly are testable by stating a baseline
+as a list of numbers. `risk/engine.py` turns two frames into an assessment and is equally
+pure. `risk/service.py` is the only thing that knows both the trail and the registry,
+`db/repositories/risk.py` is the only thing that reads the audit table or writes a row,
+`schemas/risk.py` publishes the shapes, and `api/routes/risk.py` is a translation from query
+parameters to a window and from an assessment to a response model.
+
+The architectural decisions worth recording are (a) that the baseline is a *different*
+window ending where the observation begins — enforced by a database `CHECK` on the stored
+record, not by a comment — (b) that every dimension is reported whether or not it deviated,
+so a response says what was looked for and not only what was found, and (c) that the level is
+read off a published table over factor counts rather than derived from a score. Zero
+variance, a zero baseline mean, an empty denominator and a short baseline each have a
+defined outcome and a closed reason; nothing is estimated and nothing is interpolated.
+
+The boundary is as sharp as the ones below it, and this is the phase where sharpness is
+easiest to lose. The engine cannot authorize, execute, modify a policy, change a permission
+or suspend an agent: it is a pure function with no session, no adapter and no policy engine,
+its repository's only write is a record of what was computed, and a test asserts both the
+absent imports and that an analysis leaves every other table unchanged. And it holds no
+verdict: there is no score, no severity, no confidence and no claim about intent — a
+deviation is a statement about numbers, an incident is a different subject, and this build
+does not have one.
+
 ## What Phase 9 adds
 
 The layer above the record: monitoring counts what Phase 8 wrote, and the ordering of the
@@ -308,6 +344,7 @@ apps/api/src/aicore_api/
   db/             engine/session factory, connectivity probe, models, repositories
   discovery/      the ingestion boundary a future integration calls (no integration)
   monitoring/     measurement over the audit trail (Phase 9): assembly of the counters
+  risk/           comparison against a baseline (Phase 10): the engine and the assembly
   auth/           credentials → principal → organization context → permission check
   schemas/        Pydantic models = the published contract
 ```
@@ -358,7 +395,10 @@ modules; they do not reshape these boundaries.
    ~~action firewall~~ — **Phase 7**: both are deterministic decisions built on it,
    and the firewall is the only place a decision is carried out.
 4. ~~Audit~~ — **Phase 8** records; ~~monitoring~~ — **Phase 9** counts what was
-   recorded. Anomalies, baselining, incidents, alerting and response remain: they judge
-   numbers rather than produce them, and nothing of that kind exists yet.
+   recorded; ~~anomaly detection and risk assessment~~ — **Phase 10** compares a window
+   against a stored baseline and reports the deviation with its evidence. What remains is
+   response: incident management, alerting, approvals, automated remediation and the kill
+   switch. They act on numbers rather than describe them, and nothing of that kind exists
+   yet.
 5. Intelligence layer (Nemotron / Nebius) as an *advisor* that proposes; the
    deterministic services continue to decide.

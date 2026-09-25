@@ -203,6 +203,12 @@ class Permission(StrEnum):
     ROLE_MANAGE = "role.manage"
     AUDIT_READ = "audit.read"
     SECURITY_READ = "security.read"
+    #: Phase 10. Reading a finding and recording one are different capabilities: this is
+    #: the second, and it *creates* a record — one append-only row in
+    #: ``anomaly_detections`` and nothing else. It cannot act on a finding, cannot change
+    #: what the engine computed, and cannot touch the trail, a policy, a permission or an
+    #: agent.
+    SECURITY_CREATE = "security.create"
     ASSET_READ = "asset.read"
     ASSET_CREATE = "asset.create"
     ASSET_UPDATE = "asset.update"
@@ -334,6 +340,7 @@ ROLE_PERMISSIONS: Mapping[RoleCode, frozenset[Permission]] = MappingProxyType(
                 Permission.USER_READ,
                 Permission.AUDIT_READ,
                 Permission.SECURITY_READ,
+                Permission.SECURITY_CREATE,
                 Permission.ASSET_READ,
                 Permission.ASSET_UPDATE,
                 Permission.AGENT_READ,

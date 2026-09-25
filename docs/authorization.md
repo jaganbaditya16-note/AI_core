@@ -35,7 +35,7 @@ A permission identifier is `resource.action`, and both halves are closed enums i
 | `user` | `read`, `manage` | The member directory and the membership lifecycle |
 | `role` | `read`, `manage` | The role catalog — and the permission catalogue, which is read through it |
 | `audit` | `read` | The Phase 8 audit trail: read-only, through one endpoint |
-| `security` | `read` | Security posture and findings (likewise) |
+| `security` | `read`, `create` | Security posture and findings: the Phase 10 risk reads, and recording an assessment |
 | `asset` | `read`, `create`, `update`, `delete` | The AI inventory |
 | `agent` | `read`, `create`, `update`, `delete` | The agent registry |
 

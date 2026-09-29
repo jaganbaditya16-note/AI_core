@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "staging", "production"]
-
 _ALLOWED_DB_SCHEMES = ("postgresql", "postgresql+psycopg")
 
 
@@ -49,10 +49,8 @@ class Settings(BaseSettings):
 
     auth_provider: Literal["api_token"] = "api_token"
 
-    # Nebius Token Factory / NVIDIA Nemotron advisory investigation.
-    # The key is optional so the core control plane still starts when the optional
-    # hackathon integration is disabled. The investigation endpoint returns 503
-    # rather than fabricating an AI answer when the key is absent.
+    # Optional hackathon integration. The core control plane remains functional when
+    # these values are absent; the investigation route returns 503 instead of faking AI.
     nebius_api_key: SecretStr | None = None
     nebius_base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1"
     nebius_model: str = "nvidia/Nemotron-3_5-Lightning"
@@ -64,7 +62,6 @@ class Settings(BaseSettings):
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
-        """Accept a comma-separated string as well as a list/JSON array."""
         if isinstance(value, str):
             if value.strip() == "" or value.strip() == "[]":
                 return ()
@@ -82,6 +79,14 @@ class Settings(BaseSettings):
             )
             raise ValueError(msg)
         return value
+
+    @field_validator("nebius_base_url")
+    @classmethod
+    def _validate_nebius_base_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError("AICORE_NEBIUS_BASE_URL must be an HTTPS origin without query or fragment")
+        return value.rstrip("/")
 
     @model_validator(mode="after")
     def _enforce_production_defaults(self) -> Settings:

@@ -20,6 +20,7 @@ from aicore_api.nebius.investigator import (
 from aicore_api.nebius.safety import (
     MAX_INPUT_BYTES,
     evidence_digest,
+    reject_executable_guidance,
     reject_secret_like_output,
     sanitize_for_model,
     serialize_bounded,
@@ -74,6 +75,12 @@ def test_serialization_has_hard_byte_ceiling() -> None:
 def test_output_secret_is_rejected() -> None:
     with pytest.raises(ValueError):
         reject_secret_like_output("Use Bearer " + "A" * 40)
+
+
+def test_executable_guidance_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        reject_executable_guidance("Run kubectl delete pod suspicious-agent")
+    reject_executable_guidance("Have an operator review the deployment change record.")
 
 
 def test_endpoint_rejects_ssrf_hosts_and_non_https() -> None:

@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "arena/**"
+      - "phase11-12-security-intelligence"
   pull_request:
     branches:
       - main
@@ -37,6 +38,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Motion verification
+        run: npm run verify:motion
+
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
@@ -58,8 +62,11 @@ jobs:
       - name: Run tests
         run: pytest apps/api/tests
 
-      - name: Ruff
+      - name: Ruff lint
         run: ruff check apps/api/src apps/api/tests
+
+      - name: Ruff format
+        run: ruff format --check apps/api/src apps/api/tests
 
       - name: Mypy
         run: mypy apps/api/src

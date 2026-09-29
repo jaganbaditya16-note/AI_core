@@ -16,8 +16,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "staging", "production"]
 
-#: Schemes accepted for the database URL. Anything else (e.g. sqlite) is a
-#: configuration error: AICore targets PostgreSQL by definition.
 _ALLOWED_DB_SCHEMES = ("postgresql", "postgresql+psycopg")
 
 
@@ -32,41 +30,37 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ── Identity ─────────────────────────────────────────────────────────────
     app_name: str = "aicore-api"
     app_version: str = "0.1.0"
     environment: Environment = "development"
     debug: bool = False
 
-    # ── HTTP ─────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"  # noqa: S104 - container default; bind address is explicit config
     api_port: Annotated[int, Field(ge=1, le=65535)] = 8000
     docs_enabled: bool = True
     log_level: Literal["critical", "error", "warning", "info", "debug"] = "info"
 
-    # ── CORS ─────────────────────────────────────────────────────────────────
-    # Secure default: no cross-origin access. In the default architecture the
-    # browser talks to the Next.js same-origin proxy, so this stays empty.
     cors_allow_origins: tuple[str, ...] = ()
     cors_allow_credentials: bool = False
 
-    # ── Database ─────────────────────────────────────────────────────────────
     database_url: SecretStr
     database_pool_size: Annotated[int, Field(ge=1, le=50)] = 5
     database_connect_timeout_seconds: Annotated[int, Field(ge=1, le=30)] = 5
 
-    # ── Authentication ───────────────────────────────────────────────────────
-    # Which provider validates credentials. Phase 2 ships bearer API tokens;
-    # adding an external identity provider (OIDC) means implementing the
-    # provider protocol and extending this list — the routes, dependencies and
-    # authorization code do not change, because none of them know how a
-    # principal was established. See docs/authentication.md.
     auth_provider: Literal["api_token"] = "api_token"
 
-    # ── VCS / deployment metadata (informational) ────────────────────────────
+    # Nebius Token Factory / NVIDIA Nemotron advisory investigation.
+    # The key is optional so the core control plane still starts when the optional
+    # hackathon integration is disabled. The investigation endpoint returns 503
+    # rather than fabricating an AI answer when the key is absent.
+    nebius_api_key: SecretStr | None = None
+    nebius_base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1"
+    nebius_model: str = "nvidia/Nemotron-3_5-Lightning"
+    nebius_timeout_seconds: Annotated[int, Field(ge=2, le=60)] = 20
+    nebius_max_output_tokens: Annotated[int, Field(ge=128, le=2000)] = 900
+
     git_commit: str | None = None
 
-    # ── Validators ───────────────────────────────────────────────────────────
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
@@ -104,13 +98,12 @@ class Settings(BaseSettings):
                 raise ValueError(msg)
         return self
 
-    # ── Convenience ──────────────────────────────────────────────────────────
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
 
     def safe_summary(self) -> dict[str, object]:
-        """Config summary safe to log: never includes the database URL."""
+        """Config summary safe to log: never includes the database URL or API key."""
         return {
             "app_name": self.app_name,
             "app_version": self.app_version,
@@ -122,6 +115,10 @@ class Settings(BaseSettings):
             "database_configured": bool(self.database_url.get_secret_value()),
             "database_pool_size": self.database_pool_size,
             "auth_provider": self.auth_provider,
+            "nebius_configured": bool(
+                self.nebius_api_key and self.nebius_api_key.get_secret_value()
+            ),
+            "nebius_model": self.nebius_model,
         }
 
 

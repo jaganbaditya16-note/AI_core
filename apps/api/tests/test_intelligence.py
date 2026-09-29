@@ -19,6 +19,22 @@ def test_investigation_prompt_is_bounded_and_treats_evidence_as_data() -> None:
     assert len(prompt) < MAX_EVIDENCE_CHARS + 1000
 
 
+def test_investigation_prompt_redacts_sensitive_evidence_keys() -> None:
+    prompt = build_investigation_prompt(
+        evidence={
+            "risk_level": "high",
+            "authorization": "Bearer secret-token",
+            "action_arguments": {"password": "super-secret"},
+            "safe_factor": "policy_denial_burst",
+        },
+        question=None,
+    )
+    assert "Bearer secret-token" not in prompt
+    assert "super-secret" not in prompt
+    assert "policy_denial_burst" in prompt
+    assert "[redacted]" in prompt
+
+
 def test_investigation_prompt_rejects_oversized_evidence() -> None:
     with pytest.raises(ValueError, match="bounded model-input limit"):
         build_investigation_prompt(evidence={"blob": "x" * MAX_EVIDENCE_CHARS}, question=None)
@@ -55,6 +71,23 @@ def test_model_output_is_validated_before_returning(monkeypatch: pytest.MonkeyPa
     result = intelligence.investigate(settings=_settings(), evidence={"risk_level": "high"})
     assert result.summary == "ok"
     assert result.confidence == "medium"
+
+
+def test_model_output_rejects_secret_like_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeCompletions:
+        def create(self, **_: object) -> SimpleNamespace:
+            return _response(
+                '{"summary":"use sk-test-12345678901234567890","observations":[],'
+                '"hypotheses":[],"reviewer_questions":[],"confidence":"low","limitations":[]}'
+            )
+
+    class FakeClient:
+        def __init__(self, **_: object) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intelligence, "OpenAI", FakeClient)
+    with pytest.raises(intelligence.IntelligenceUnavailable, match="sensitive content"):
+        intelligence.investigate(settings=_settings(), evidence={"risk_level": "high"})
 
 
 def test_model_output_rejects_unbounded_response(monkeypatch: pytest.MonkeyPatch) -> None:

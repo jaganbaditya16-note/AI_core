@@ -193,5 +193,5 @@ def test_inference_request_redacts_evidence_and_keeps_key_server_side(monkeypatc
     assert "nebius-secret-never-in-evidence" not in outbound
     assert captured["request"].headers["Authorization"].startswith("Bearer ")
     assert captured["timeout"] == settings.nebius_timeout_seconds
-    assert result.action_taken if hasattr(result, "action_taken") else True
+    assert not hasattr(result, "action_taken")
     assert result.correlation_id == "request-123"

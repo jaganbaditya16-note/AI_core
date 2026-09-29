@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const incidents = [
   { id: "INC-1042", title: "Agent privilege burst", severity: "CRITICAL", status: "INVESTIGATING", signal: "4.8× unusual action frequency", time: "2 min ago" },
@@ -13,11 +13,43 @@ const approvals = [
   { id: "APR-0079", action: "agent.posture_check", target: "staging-agent-2", requester: "Operator", expires: "21 min" },
 ] as const;
 
+type Connection = {
+  connected: boolean;
+  reachable: boolean;
+  liveness?: { status: number | null; latencyMs: number | null };
+  readiness?: { status: number | null; latencyMs: number | null };
+  openapi?: { status: number | null; latencyMs: number | null };
+  error?: string;
+};
+
 export default function OperationsPage() {
   const [selectedId, setSelectedId] = useState<(typeof incidents)[number]["id"]>(incidents[0].id);
   const [tab, setTab] = useState<"overview" | "approvals">("overview");
+  const [connection, setConnection] = useState<Connection | null>(null);
   const selected = incidents.find((incident) => incident.id === selectedId) ?? incidents[0];
   const selectedEvidence = useMemo(() => ["action_rate_spike", "unusual_frequency", "policy_denial_burst"], []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkConnection = async () => {
+      try {
+        const response = await fetch("/api/connection", { cache: "no-store" });
+        const body = (await response.json()) as { backend?: Connection };
+        if (!cancelled) setConnection(body.backend ?? { connected: false, reachable: false });
+      } catch {
+        if (!cancelled) setConnection({ connected: false, reachable: false, error: "Frontend proxy unavailable" });
+      }
+    };
+    void checkConnection();
+    const timer = window.setInterval(checkConnection, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const connectionLabel = connection?.connected ? "Backend connected" : connection ? "Backend unavailable" : "Checking backend";
+  const connectionClass = connection?.connected ? "text-emerald-300" : connection ? "text-amber-300" : "text-slate-400";
 
   return (
     <main className="min-h-screen bg-[#070b14] text-white">
@@ -28,12 +60,29 @@ export default function OperationsPage() {
             <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Proof-Bound AI Security</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-400">Deterministic controls detect and enforce. NVIDIA Nemotron investigates bounded evidence. Humans approve consequential actions.</p>
           </div>
-          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-right"><div className="text-xs text-emerald-300">CONTROL PLANE</div><div className="mt-1 text-sm font-semibold">Protected · No secrets exposed</div></div>
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-right">
+            <div className="text-xs text-emerald-300">CONTROL PLANE</div>
+            <div className={`mt-1 text-sm font-semibold ${connectionClass}`}>{connectionLabel}</div>
+            <div className="mt-1 text-[11px] text-slate-500">Secrets remain server-side</div>
+          </div>
         </header>
 
         <section className="grid gap-4 md:grid-cols-4">
           {[['3','Open incidents'],['1','Critical signal'],['2','Pending approvals'],['100%','AI advisory only']].map(([value,label]) => <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 shadow-2xl shadow-black/20"><div className="text-2xl font-semibold">{value}</div><div className="mt-1 text-xs uppercase tracking-wider text-slate-500">{label}</div></div>)}
         </section>
+
+        {connection && (
+          <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <span className={connection.connected ? "text-emerald-300" : "text-amber-300"}>● {connectionLabel}</span>
+              <span>API liveness: {connection.liveness?.status ?? "—"}</span>
+              <span>Readiness: {connection.readiness?.status ?? "—"}</span>
+              <span>OpenAPI: {connection.openapi?.status ?? "—"}</span>
+              {connection.liveness?.latencyMs != null && <span>API latency: {connection.liveness.latencyMs} ms</span>}
+              {connection.error && <span className="text-amber-300">{connection.error}</span>}
+            </div>
+          </section>
+        )}
 
         <div className="mt-8 flex gap-2 border-b border-white/10"><button onClick={() => setTab('overview')} className={`px-4 py-3 text-sm ${tab==='overview'?'border-b-2 border-cyan-300 text-white':'text-slate-500'}`}>Detection & Investigation</button><button onClick={() => setTab('approvals')} className={`px-4 py-3 text-sm ${tab==='approvals'?'border-b-2 border-cyan-300 text-white':'text-slate-500'}`}>Human Approval Queue</button></div>
 

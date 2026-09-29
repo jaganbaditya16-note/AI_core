@@ -1,8 +1,4 @@
-"""Application configuration.
-
-All configuration comes from the environment. Secrets use SecretStr and are never included
-in safe summaries or model prompts.
-"""
+"""Application configuration with secret-safe Nebius intelligence settings."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -30,20 +26,15 @@ class Settings(BaseSettings):
     log_level: Literal["critical", "error", "warning", "info", "debug"] = "info"
     cors_allow_origins: tuple[str, ...] = ()
     cors_allow_credentials: bool = False
-
     database_url: SecretStr
     database_pool_size: Annotated[int, Field(ge=1, le=50)] = 5
     database_connect_timeout_seconds: Annotated[int, Field(ge=1, le=30)] = 5
-
     auth_provider: Literal["api_token"] = "api_token"
 
-    # Optional intelligence provider. A missing key disables live inference instead of
-    # silently falling back to a mock, which keeps demonstrations honest.
     nebius_api_key: SecretStr | None = None
-    nebius_base_url: str = "https://api.tokenfactory.nebius.com/v1/"
+    nebius_base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1/"
     nebius_model: str = "nvidia/nemotron-3-super-120b-a12b"
     nebius_timeout_seconds: Annotated[float, Field(gt=0, le=120)] = 30.0
-
     git_commit: str | None = None
 
     @field_validator("cors_allow_origins", mode="before")
@@ -60,10 +51,7 @@ class Settings(BaseSettings):
     def _validate_database_url(cls, value: SecretStr) -> SecretStr:
         url = value.get_secret_value()
         if not url.startswith(_ALLOWED_DB_SCHEMES):
-            raise ValueError(
-                "AICORE_DATABASE_URL must be a PostgreSQL URL "
-                f"({' or '.join(_ALLOWED_DB_SCHEMES)})"
-            )
+            raise ValueError("AICORE_DATABASE_URL must be a PostgreSQL URL")
         return value
 
     @field_validator("nebius_base_url")
@@ -80,8 +68,6 @@ class Settings(BaseSettings):
                 raise ValueError("AICORE_DEBUG must be disabled in production")
             if "*" in self.cors_allow_origins:
                 raise ValueError('AICORE_CORS_ALLOW_ORIGINS must not contain "*" in production')
-            if self.cors_allow_credentials and "*" in self.cors_allow_origins:
-                raise ValueError("CORS credentials cannot be combined with a wildcard origin")
         return self
 
     @property

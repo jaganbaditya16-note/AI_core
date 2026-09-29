@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from openai import OpenAI
+from pydantic import BaseModel, Field, ValidationError
 
 from aicore_api.config import Settings
 
 MAX_QUESTION_CHARS = 1000
 MAX_EVIDENCE_CHARS = 12000
+MAX_RESPONSE_CHARS = 16000
 
 SYSTEM_PROMPT = """You are AICore's security investigation assistant.
 You are advisory, not authoritative. Never authorize, execute, approve, deny, suspend,
@@ -25,6 +27,17 @@ confidence, limitations. Confidence must be low, medium, or high.
 
 class IntelligenceUnavailable(RuntimeError):
     """Nebius inference is not configured or cannot be reached."""
+
+
+class _ModelInvestigation(BaseModel):
+    """Strict boundary for untrusted model output before it reaches the API contract."""
+
+    summary: str = Field(default="No summary returned.", max_length=3000)
+    observations: list[str] = Field(default_factory=list, max_length=8)
+    hypotheses: list[str] = Field(default_factory=list, max_length=8)
+    reviewer_questions: list[str] = Field(default_factory=list, max_length=8)
+    confidence: str = "low"
+    limitations: list[str] = Field(default_factory=list, max_length=8)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,32 +90,32 @@ def investigate(
             ],
         )
     except Exception as exc:
+        # Provider failures must not expose SDK/network details to the caller.
         raise IntelligenceUnavailable("Nebius Token Factory inference failed") from exc
 
     content = response.choices[0].message.content
     if not content:
         raise IntelligenceUnavailable("Nebius Token Factory returned an empty response")
+    if len(content) > MAX_RESPONSE_CHARS:
+        raise IntelligenceUnavailable("Nemotron response exceeded the bounded output limit")
+
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise IntelligenceUnavailable("Nemotron returned invalid JSON") from exc
+        raw = json.loads(content)
+        parsed = _ModelInvestigation.model_validate(raw)
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise IntelligenceUnavailable("Nemotron returned an invalid advisory response") from exc
 
-    def strings(key: str) -> list[str]:
-        value = parsed.get(key, [])
-        if not isinstance(value, list):
-            return []
-        return [str(item)[:1000] for item in value[:8]]
+    confidence = parsed.confidence if parsed.confidence in {"low", "medium", "high"} else "low"
 
-    confidence = str(parsed.get("confidence", "low"))
-    if confidence not in {"low", "medium", "high"}:
-        confidence = "low"
+    def bounded_strings(values: list[str]) -> list[str]:
+        return [value[:1000] for value in values[:8]]
 
     return InvestigationResult(
-        summary=str(parsed.get("summary", "No summary returned."))[:3000],
-        observations=strings("observations"),
-        hypotheses=strings("hypotheses"),
-        reviewer_questions=strings("reviewer_questions"),
+        summary=parsed.summary,
+        observations=bounded_strings(parsed.observations),
+        hypotheses=bounded_strings(parsed.hypotheses),
+        reviewer_questions=bounded_strings(parsed.reviewer_questions),
         confidence=confidence,
-        limitations=strings("limitations"),
+        limitations=bounded_strings(parsed.limitations),
         model=settings.nebius_model,
     )

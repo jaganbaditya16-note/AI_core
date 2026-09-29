@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 from aicore_api.config import Settings
 from aicore_api.nebius.safety import (
     evidence_digest,
+    reject_executable_guidance,
     reject_secret_like_output,
     sanitize_for_model,
     serialize_bounded,
@@ -256,7 +257,23 @@ def investigate(
 
     try:
         safe_content = reject_secret_like_output(str(content))
-        brief = InvestigationBrief.model_validate(_extract_json(safe_content))
+        parsed = _extract_json(safe_content)
+        brief = InvestigationBrief.model_validate(parsed)
+        for field in (
+            "summary",
+            "severity_interpretation",
+            "why_it_matters",
+            "hypotheses",
+            "evidence_used",
+            "checks",
+            "recommended_containment",
+            "confidence",
+            "uncertainties",
+            "do_not_do",
+        ):
+            value = getattr(brief, field)
+            text = value if isinstance(value, str) else "\n".join(value)
+            reject_executable_guidance(text)
     except (ValueError, ValidationError) as exc:
         raise InvestigatorUpstreamError(
             "Nebius output failed the investigation safety contract"

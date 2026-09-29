@@ -1,18 +1,19 @@
 import { expect, test } from "@playwright/test";
 
-/**
- * Phase 0 smoke tests: the application loads and the frontend↔backend path works.
- * Deliberately small — this is a foundation check, not a feature suite.
- */
-
 test.describe("application shell", () => {
-  test("overview page loads and states the phase honestly", async ({ page }) => {
+  test("overview page presents the security intelligence product", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { name: "AICore", level: 1 })).toBeVisible();
-    await expect(page.getByText("Phase 0 · Foundation")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Not implemented yet" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Open system health" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", {
+        name: "AI security decisions stay deterministic. Intelligence stays human-controlled.",
+        level: 1,
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("AICore · Security Intelligence")).toBeVisible();
+    await expect(page.getByText("NVIDIA Nemotron via Nebius Token Factory · human review")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open security operations" })).toBeVisible();
+    await expect(page.getByText("The model is advisory — never the authorization authority.")).toBeVisible();
   });
 
   test("unknown route renders the not-found page", async ({ page }) => {
@@ -20,6 +21,19 @@ test.describe("application shell", () => {
 
     expect(response?.status()).toBe(404);
     await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
+  });
+
+  test("security operations dashboard exposes the human-review workflow", async ({ page }) => {
+    await page.goto("/operations");
+
+    await expect(page.getByRole("heading", { name: "Proof-Bound AI Security" })).toBeVisible();
+    await expect(page.getByText("Deterministic controls detect and enforce.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Investigate with Nemotron" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Human Approval Queue" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Human Approval Queue" }).click();
+    await expect(page.getByRole("heading", { name: "Human approval queue" })).toBeVisible();
+    await expect(page.getByText("Separation of duties: reviewers cannot approve their own requests.")).toBeVisible();
   });
 });
 
@@ -29,13 +43,8 @@ test.describe("frontend ↔ backend health path", () => {
 
     await expect(page.getByRole("heading", { name: "System health", level: 1 })).toBeVisible();
 
-    // The API is running (Playwright starts it) and its database is deliberately
-    // unreachable, so the panel must land on a terminal state reached through a
-    // real HTTP round trip — never a hardcoded value.
     const status = page.getByText(/Operational|Reachable, dependency degraded|Backend unreachable/);
     await expect(status).toBeVisible({ timeout: 15_000 });
-
-    // The database check is surfaced with its own status line.
     await expect(page.getByText("database")).toBeVisible();
   });
 

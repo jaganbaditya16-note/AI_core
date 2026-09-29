@@ -2,7 +2,7 @@
   "name": "aicore",
   "version": "0.0.0",
   "private": true,
-  "description": "AICore — Enterprise AI Control Plane (Phase 0 foundation)",
+  "description": "AICore — Enterprise AI security control plane with human-in-the-loop Nemotron intelligence",
   "license": "SEE LICENSE IN LICENSE",
   "workspaces": [
     "apps/web",

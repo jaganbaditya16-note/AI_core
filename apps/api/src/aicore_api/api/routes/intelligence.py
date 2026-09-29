@@ -1,6 +1,7 @@
 """Human-in-the-loop security investigation with NVIDIA Nemotron on Nebius."""
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,19 +32,11 @@ ReadSecurity = Annotated[OrganizationContext, Depends(require_permission(Permiss
 def investigate_detection(
     context: ReadSecurity,
     session: SessionDep,
-    detection_id: str,
+    detection_id: uuid.UUID,
     body: InvestigationRequest,
 ) -> InvestigationResponse:
-    """Generate advisory context without giving the model control of AICore.
-
-    Only the deterministic detection evidence stored by Phase 10 is sent. The route never
-    accepts action arguments, credentials, arbitrary audit metadata or an execution command.
-    The model's output is informational and cannot enter authorization or the firewall.
-    """
-    try:
-        row = AnomalyDetectionRepository(session, context.organization_id).get(detection_id)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detection not found") from exc
+    """Generate advisory context without giving the model control of AICore."""
+    row = AnomalyDetectionRepository(session, context.organization_id).get(detection_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detection not found")
 

@@ -1,92 +1,104 @@
 # AICore — Evidence-to-Decision Investigator
 
-## What this adds
+## Product
 
-AICore already turns agent activity into deterministic anomaly detections. This extension adds a deliberately narrow AI layer: **NVIDIA Nemotron on Nebius Token Factory investigates a recorded detection and produces a bounded brief for a human reviewer**.
+AICore is a security control plane for organizations operating AI agents. The hackathon feature adds a narrow, high-value capability: **NVIDIA Nemotron 3.5 Lightning, served by Nebius Token Factory, turns a deterministic anomaly into a bounded investigation brief for a human operator.**
 
-The model is not the security authority. It cannot authorize, approve, execute, block, suspend, mutate policy, or change the detection. The deterministic AICore control plane remains the enforcement boundary.
-
-That separation is the product story:
+The product is deliberately split into three trust levels:
 
 ```text
-agent activity
-    ↓
-deterministic baseline + anomaly detection
-    ↓
-recorded evidence
-    ↓
-bounded evidence adapter
-    ↓
-NVIDIA Nemotron 3.5 Lightning
-served by Nebius Token Factory
-    ↓
-structured investigation brief
-    ↓
-human verifies evidence
-    ↓
-existing authorization + policy + firewall
+OBSERVE
+agent activity → deterministic baseline → recorded anomaly/evidence
+
+REASON
+bounded + redacted evidence → NVIDIA Nemotron on Nebius Token Factory
+                  → structured hypotheses + verification plan
+
+DECIDE
+human review → current identity/RBAC → policy → action firewall
+                  → only then can an existing action be executed
 ```
+
+**Nemotron investigates. AICore decides.**
+
+That is the core safety and product distinction. The model is not the security authority and has no tool access.
 
 ## Real user problem
 
-Security teams can detect unusual AI-agent behaviour but still spend time answering:
+AI-agent security teams face a costly gap between detection and decision. A detector can identify an unusual pattern, but a human still has to assemble context, distinguish facts from hypotheses, decide what to verify, and avoid premature remediation.
 
-- What exactly changed?
-- Which parts are facts versus hypotheses?
-- What should a human verify next?
-- What should **not** be done yet?
-- Can an AI assistant help without becoming an unsafe autonomous security operator?
+AICore addresses that gap without handing an LLM production control:
 
-AICore addresses that gap by turning a deterministic detection into a reviewable investigation brief while preserving a hard boundary between **reasoning** and **authority**.
+- deterministic systems produce the evidence;
+- Nemotron explains and organizes that evidence;
+- uncertainty remains visible;
+- humans verify the suggested checks;
+- the existing authorization, policy and firewall layers remain authoritative.
 
-## Why the model is useful here
+This makes the AI useful in the exact place where language reasoning adds value while keeping the high-risk decision path deterministic.
 
-A deterministic detector is good at repeatable thresholds and evidence. It is not good at turning several structured signals into a concise investigation narrative.
+## What Nemotron does
 
-Nemotron is used for the part where language reasoning adds value:
+Nemotron is used for:
 
-1. summarize the recorded anomaly;
-2. explain why it matters;
-3. generate explicitly-labelled hypotheses;
-4. propose safe verification checks;
-5. suggest non-executable containment considerations;
-6. state uncertainty and unsafe next steps.
+1. concise anomaly explanation;
+2. severity interpretation as advisory context, not a policy verdict;
+3. explicitly labelled hypotheses;
+4. evidence categories used in the reasoning;
+5. safe, falsifiable verification checks;
+6. non-executable containment considerations;
+7. confidence and uncertainty;
+8. explicit unsafe actions to avoid.
 
-The model never receives credentials, action arguments, raw audit payloads, or arbitrary tenant rows.
+The model cannot approve, execute, block, delete, suspend, change policy, call tools, or mutate database state.
 
-## Safety boundary
+## Security architecture
 
-The endpoint requires the existing `audit.read` permission and loads the detection through the tenant-scoped repository. A missing or cross-tenant detection is a 404.
+### 1. Tenant boundary
 
-The request body is empty. The client cannot supply a risk level, evidence, target, role, policy result, or execution request.
+The route requires the existing `audit.read` permission and loads the detection through the tenant-scoped repository. A missing or cross-tenant detection is returned as a 404.
 
-The model output is validated against a strict Pydantic contract. Invalid model output becomes a 503; it is never silently converted into a trusted answer.
+The client cannot submit its own risk score, evidence, target, role, policy result or execution request.
 
-The output contains `action_taken: false` by construction. No investigation route calls the action execution service.
+### 2. Data minimization
 
-## Privacy boundary
+The route constructs an explicit allow-list of detection fields instead of serializing the ORM object. The outbound adapter then:
 
-Only server-generated anomaly fields are sent to Nebius. The integration applies recursive bounds to strings, lists and mappings before inference. This limits accidental context growth and makes the outbound payload auditable.
+- recursively redacts credential-shaped keys such as `password`, `token`, `api_key`, `authorization`, cookies and private keys;
+- redacts bearer/JWT-like strings;
+- limits nesting, strings, mappings and lists;
+- enforces a hard 32 KiB serialized input ceiling;
+- calculates a SHA-256 digest of the exact bounded representation sent to the model.
 
-The system prompt forbids inventing credentials, commands, IP addresses, users, assets, events, or payloads. The application still treats model output as untrusted text.
+The digest is a provenance identifier only; source evidence is never returned through it.
 
-Operators must review the evidence and their organization's data-residency and retention requirements before enabling external inference.
+### 3. Prompt-injection boundary
 
-## Configuration
+Detection evidence can contain attacker-controlled text. The system prompt therefore explicitly treats the evidence block as **data, not instructions**. The application does not allow evidence to become a system message or tool instruction.
 
-Set these server-only variables:
+Prompt hardening is defense-in-depth, not a claim that prompt injection can never occur. The more important control is that Nemotron has no authority or tools to act on a successful injection.
 
-```text
-AICORE_NEBIUS_API_KEY=<secret>
-AICORE_NEBIUS_BASE_URL=https://api.tokenfactory.us-central1.nebius.com/v1
-AICORE_NEBIUS_MODEL=nvidia/Nemotron-3_5-Lightning
-AICORE_NEBIUS_TIMEOUT_SECONDS=20
-AICORE_NEBIUS_MAX_OUTPUT_TOKENS=900
-```
+### 4. Model-output boundary
 
-Never use `NEXT_PUBLIC_` for the API key.
+Nemotron output must satisfy a strict Pydantic contract. Oversized or credential-shaped output is rejected. Invalid inference is a service failure, never a trusted fallback.
 
-The current Nebius documentation lists an OpenAI-compatible Token Factory API and the public NVIDIA Nemotron lineup. The model is configurable so the deployment can move to another supported Nemotron endpoint without changing the safety boundary.
+The response has `action_taken: false` by construction.
+
+### 5. SSRF protection
+
+The configured inference endpoint must use HTTPS and one of the approved Nebius Token Factory hosts. Credentials, query strings and fragments are rejected. This prevents a configuration mistake from turning the inference client into a generic internal HTTP client.
+
+### 6. Cost/abuse protection
+
+The process has a bounded inference concurrency guard. Saturation returns HTTP 429 rather than allowing unbounded model calls. Output tokens and timeout are capped by configuration.
+
+This is intentionally a local defense. A production multi-instance deployment should add distributed per-tenant rate limiting at the gateway as well.
+
+### 7. Secret handling
+
+`NEBIUS_API_KEY` is server-side configuration only. It is never a `NEXT_PUBLIC_*` value, never included in model evidence, and never included in the safe configuration summary.
+
+The repository contains placeholders only. Real credentials must be supplied through deployment secrets/environment configuration.
 
 ## API
 
@@ -94,136 +106,164 @@ The current Nebius documentation lists an OpenAI-compatible Token Factory API an
 POST /organizations/{organization_id}/risk/detections/{detection_id}/investigation
 ```
 
-The endpoint returns:
+Response includes:
 
-- summary
-- why it matters
-- hypotheses
-- verification checks
-- recommended containment considerations
-- confidence
-- uncertainties
-- do-not-do guidance
-- model identifier
-- correlation ID
-- whether input was truncated
-- `action_taken: false`
+- detection identity/type/risk level;
+- summary and severity interpretation;
+- hypotheses;
+- evidence categories used;
+- safe verification checks;
+- containment considerations;
+- confidence and uncertainty;
+- do-not-do guidance;
+- model identifier;
+- request correlation ID;
+- input-boundary indicator;
+- SHA-256 evidence digest;
+- `action_taken: false`.
 
-## Demo path
+Possible operational responses include 401, 403, 404, 429 and 503. The endpoint never converts an inference failure into a fake answer.
 
-For the three-minute hackathon video, demonstrate one complete story instead of many disconnected screens:
+## Demo story
 
-1. Show an agent's normal baseline.
-2. Generate or display a recorded anomaly.
-3. Open the detection and show its deterministic evidence.
+The three-minute demo should be one complete customer story:
+
+1. Show normal AI-agent behaviour and the deterministic baseline.
+2. Trigger/show one recorded anomalous pattern.
+3. Open the evidence generated by AICore.
 4. Click **Investigate with Nemotron**.
-5. Show the structured brief and clearly label it **AI advisory — not authorization**.
-6. Point to the verification checklist and uncertainty section.
-7. Show that the action path remains behind AICore authorization, policy and firewall checks.
-8. Say aloud: **"Nebius Token Factory runs NVIDIA Nemotron; the model explains, AICore decides."**
+5. Show three visually separate sections: **Recorded facts**, **AI hypotheses**, and **Human verification**.
+6. Highlight the uncertainty and do-not-do sections.
+7. Attempt to demonstrate that the investigation response cannot execute an action.
+8. Show that an actual action remains behind authentication, RBAC, policy and the action firewall.
+9. State clearly: **"Nebius Token Factory runs NVIDIA Nemotron. Nemotron investigates; AICore decides."**
 
-Do not claim a remediation was executed by the model unless a separately verified, authorized action workflow actually performs it.
-
-## Hackathon requirement mapping
-
-The current official rules require a working software application that runs on Nebius Token Factory or Nebius AI Cloud and uses at least one NVIDIA open-source model. They also require a working demo URL, public repository, README/setup instructions, a public <=3-minute YouTube demo, and specific feedback about Nebius Token Factory/AI Cloud and the NVIDIA model used. The judging criteria are equally weighted: technological implementation, design, potential impact, and quality of idea.
-
-This implementation is designed to make the required technologies visible in the product architecture and demo. **Calling the Token Factory API from an otherwise locally-hosted application is not treated here as proof of the hosting requirement. The final submission should deploy the application on Nebius AI Cloud/Serverless or otherwise verify that its runtime satisfies the platform rule.**
+Do not claim autonomous remediation unless a separately verified, authorized action workflow actually performs it.
 
 ## Customer perspective
 
 ### Value
 
-- Converts a noisy anomaly into a reviewable investigation brief.
-- Keeps evidence and authorization deterministic.
-- Reduces the amount of security context a human must assemble manually.
-- Makes uncertainty explicit instead of presenting a confident-looking verdict.
+- Less time turning a detection into a reviewable incident narrative.
+- Deterministic evidence remains the source of truth.
+- Hypotheses are visibly separated from facts.
+- Verification steps are explicit instead of hidden in a model's prose.
+- The AI layer can fail without disabling the underlying security control plane.
 
-### Trust concerns
+### Trust concerns and responses
 
-- A model can still hallucinate.
-- External inference may be inappropriate for sensitive evidence.
-- Model latency and availability can vary.
-- Recommendations are not automatically validated against the organization's current change plan.
-
-The product addresses these concerns by bounding input, validating output, requiring human review, and keeping the model outside the enforcement path.
+| Customer concern | Design response |
+|---|---|
+| "Can the model execute something dangerous?" | No tools and no execution path. `action_taken` is always false. |
+| "Can tenant data cross boundaries?" | Tenant-scoped repository plus explicit field allow-list. |
+| "Can secrets reach the model?" | Recursive sensitive-key/value redaction plus hard payload cap. |
+| "Can a malicious detection prompt-inject the model?" | Evidence is isolated as data and the model has no authority. |
+| "Can the endpoint be abused for unlimited spend?" | Token/output cap, timeout and bounded concurrency; production gateway rate limiting remains recommended. |
+| "What if the model hallucinates?" | Strict schema, explicit hypotheses/uncertainty, human verification, no authority. |
+| "What if Nebius is unavailable?" | The core control plane remains usable; investigation fails closed with 503. |
 
 ## Judge perspective
 
 ### Technological implementation
 
-The interesting implementation is not merely "call an LLM." The important boundary is deterministic detection → controlled evidence adapter → Nemotron reasoning → structured output → deterministic security controls.
+The value is not another chatbot. The implementation connects a real deterministic security pipeline to a production-oriented NVIDIA model through Nebius while preserving an explicit trust boundary:
+
+**detection → evidence adapter → safety boundary → Nemotron reasoning → structured advisory output → human verification → existing deterministic enforcement.**
 
 ### Design
 
-The UI should make three states visually distinct:
+A judge should be able to tell immediately which information is:
 
-1. **Fact** — recorded deterministic evidence.
-2. **AI hypothesis** — Nemotron interpretation.
-3. **Decision** — AICore authorization/policy/firewall result.
+- **FACT** — recorded by AICore;
+- **AI HYPOTHESIS** — generated by Nemotron;
+- **DECISION** — made by a human and enforced by AICore.
 
-Never merge those states into one AI-generated score.
+Those states should never be collapsed into a single AI score.
 
 ### Potential impact
 
-The initial audience is organizations operating internal AI agents, where anomalous behaviour needs investigation without handing an LLM unrestricted control over production systems.
+The first customer is an organization running internal AI agents where anomalous behaviour is expensive to investigate and unsafe to hand entirely to an autonomous LLM.
+
+The architecture can generalize to AI-agent operations, internal security operations, model/tool governance and regulated environments, subject to deployment-specific privacy requirements.
 
 ### Quality of idea
 
-The differentiator is the **authority boundary**: the model is useful precisely because it is not trusted with the final security decision.
+The differentiator is not claiming that the model is infallible. The product makes the model useful **because it is constrained**: it can reason over evidence but cannot become the authority that acts on its own reasoning.
 
 ## Scalability
 
-The inference adapter is stateless. It can run behind a serverless endpoint and scale horizontally. Detection data remains in PostgreSQL, while each investigation is an independent inference request.
+The inference adapter is stateless and horizontally deployable. The control-plane database remains the source of truth.
 
-For higher traffic:
+For production scale:
 
-- use a queue for asynchronous investigation;
-- cache identical investigation inputs by detection fingerprint + model version;
-- add per-tenant rate limits;
-- use a smaller Nemotron model for high-volume triage and a larger model for escalated cases;
-- collect latency, token usage and failure metrics without logging secrets.
+- move investigations to an asynchronous queue for long-running analysis;
+- use distributed per-tenant rate limits;
+- cache only by a deterministic evidence digest + model/version/prompt version;
+- use a smaller Nemotron model for routine triage and a larger supported model for escalations;
+- record latency/token/error metrics without recording prompts or credentials;
+- use dedicated Nebius capacity when isolation or predictable throughput becomes necessary.
+
+Nebius currently documents public and dedicated inference paths and describes Token Factory as an OpenAI-compatible inference platform with autoscaling and production-oriented deployment options. citeturn0search6turn0search10
 
 ## Cost discipline
 
-The application itself uses ordinary open-source Python/Next.js components. Nebius Token Factory is consumption-based. The hackathon materials advertise free Token Factory credits, but **free credits are not the same as unlimited zero-cost production usage**. Keep the demo small, cap output tokens, and stop the deployment when the credits are exhausted.
+The software stack itself is open-source Python/Next.js infrastructure. Nebius Token Factory inference is usage-priced, so the application deliberately bounds output tokens and concurrency. Current Nebius documentation lists Nemotron 3.5 Lightning at a low per-token public-endpoint price relative to larger Nemotron variants; exact pricing and availability should be rechecked before submission because they can change. citeturn0search2
+
+Do not describe the application as unlimited zero-cost production software merely because hackathon credits may be available.
 
 ## Known limitations
 
-- No automatic root-cause proof.
-- No autonomous remediation.
-- No claim that model recommendations are correct merely because they pass schema validation.
-- No persistent AI memory is introduced by this feature.
-- No new database table is required for the advisory result.
-- Browser E2E and a live hosted endpoint still need to be verified in the target deployment environment before submission.
-- The repository must be public and include its open-source license for judging.
+- Nemotron does not prove root cause.
+- Schema validation does not prove factual correctness.
+- Prompt-injection defenses reduce risk but cannot mathematically eliminate model misinterpretation.
+- The current concurrency guard is process-local; distributed rate limiting belongs at the gateway.
+- Sensitive-data policy is deployment-specific; operators must decide whether the selected evidence is permitted to leave their environment.
+- No autonomous remediation is introduced by this feature.
+- A live hosted demo and real inference measurement must be verified in the final submission environment.
 
-## Required hackathon feedback template
+## Nebius/NVIDIA requirement mapping
 
-The submission should contain concrete feedback rather than generic praise:
+The hackathon organizers explicitly require teams to explain what they used Nebius Token Factory/AI Cloud and the NVIDIA model for, what worked, what needs improvement, how onboarding felt, and whether they would build with the tools again. They also explicitly advise teams to hide API keys, name the required technologies in the project description/Built With section, and demonstrate them clearly in the three-minute video. citeturn1search0
 
-### Nebius Token Factory
+Nebius documents an OpenAI-compatible Token Factory API and a current Nemotron catalog including Nemotron 3.5 Lightning, with public inference available for the highlighted model. citeturn0search1turn0search2
 
-**Used for:** serving the investigation model for anomaly triage.
+### Feedback that must be measured, not invented
 
-**What worked well:** _Fill in measured onboarding time, API compatibility, latency and observed reliability._
+**Nebius Token Factory — used for:** serving Nemotron inference for bounded anomaly investigation.
 
-**What needs work:** _Name the exact API/console/documentation step and describe the problem._
+**What worked:** record actual onboarding time, API compatibility, first-token latency, total latency, reliability and model-switching experience.
 
-**Onboarding:** _Record the path from account/credits to first successful inference._
+**What needs work:** name the exact console/API/documentation step and describe the observed issue.
 
-**Would build again:** _State the decision and why, based on observed evidence._
+**Onboarding:** record the path from account/credits → API key → first successful request.
 
-### NVIDIA Nemotron
+**Would build again:** decide from the measured experience, not from generic praise.
 
-**Model used:** `nvidia/Nemotron-3_5-Lightning`.
+**NVIDIA Nemotron — model:** `nvidia/Nemotron-3_5-Lightning`.
 
-**Used for:** bounded security-investigation reasoning over deterministic anomaly evidence.
+**Used for:** security-investigation reasoning over deterministic anomaly evidence.
 
-**What worked well:** _Record concrete examples from the demo/evaluation set._
+**What worked:** record concrete examples where the model correctly separated evidence, hypotheses and uncertainty.
 
-**What needs work:** _Record failure cases, schema-following issues, latency or reasoning gaps._
+**What needs work:** record failure cases, schema-following issues, latency or reasoning gaps.
 
-**Would build again:** _State the decision and why, based on observed evidence._
+**Would build again:** decide after evaluating the actual demo workload.
 
-Do not fabricate benchmark numbers or feedback. Measure them during the final demo run.
+## Final submission safety checklist
+
+Before submission:
+
+- [ ] Public repository contains no real API key or database credential.
+- [ ] Secret scan passes.
+- [ ] Nebius key exists only in server/deployment secret configuration.
+- [ ] Live Nemotron inference succeeds.
+- [ ] Cross-tenant investigation is rejected.
+- [ ] Credential-like evidence is redacted before inference.
+- [ ] Oversized evidence is bounded.
+- [ ] Prompt-injection fixture remains non-executable.
+- [ ] Invalid model JSON fails closed.
+- [ ] Investigation cannot call the action execution path.
+- [ ] Existing action firewall tests remain green.
+- [ ] Production build and API tests are green.
+- [ ] Live hosted demo is verified.
+- [ ] Actual Nebius/NVIDIA feedback is measured and written into the submission.

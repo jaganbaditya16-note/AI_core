@@ -6,16 +6,17 @@ const incidents = [
   { id: "INC-1042", title: "Agent privilege burst", severity: "CRITICAL", status: "INVESTIGATING", signal: "4.8× unusual action frequency", time: "2 min ago" },
   { id: "INC-1041", title: "Novel production resource", severity: "HIGH", status: "ACKNOWLEDGED", signal: "New resource observed", time: "18 min ago" },
   { id: "INC-1039", title: "Repeated policy denials", severity: "MEDIUM", status: "CONTAINED", signal: "17 denied requests", time: "42 min ago" },
-];
+] as const;
 
 const approvals = [
   { id: "APR-0081", action: "agent.posture_check", target: "prod-agent-7", requester: "Analyst", expires: "58 min" },
   { id: "APR-0079", action: "agent.posture_check", target: "staging-agent-2", requester: "Operator", expires: "21 min" },
-];
+] as const;
 
 export default function OperationsPage() {
-  const [selected, setSelected] = useState(incidents[0]);
+  const [selectedId, setSelectedId] = useState<(typeof incidents)[number]["id"]>(incidents[0].id);
   const [tab, setTab] = useState<"overview" | "approvals">("overview");
+  const selected = incidents.find((incident) => incident.id === selectedId) ?? incidents[0];
   const selectedEvidence = useMemo(() => ["action_rate_spike", "unusual_frequency", "policy_denial_burst"], []);
 
   return (
@@ -31,7 +32,7 @@ export default function OperationsPage() {
         </header>
 
         <section className="grid gap-4 md:grid-cols-4">
-          {[['3','Open incidents',''],['1','Critical signal',''],['2','Pending approvals',''],['100%','AI advisory only','']].map(([value,label]) => <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 shadow-2xl shadow-black/20"><div className="text-2xl font-semibold">{value}</div><div className="mt-1 text-xs uppercase tracking-wider text-slate-500">{label}</div></div>)}
+          {[['3','Open incidents'],['1','Critical signal'],['2','Pending approvals'],['100%','AI advisory only']].map(([value,label]) => <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 shadow-2xl shadow-black/20"><div className="text-2xl font-semibold">{value}</div><div className="mt-1 text-xs uppercase tracking-wider text-slate-500">{label}</div></div>)}
         </section>
 
         <div className="mt-8 flex gap-2 border-b border-white/10"><button onClick={() => setTab('overview')} className={`px-4 py-3 text-sm ${tab==='overview'?'border-b-2 border-cyan-300 text-white':'text-slate-500'}`}>Detection & Investigation</button><button onClick={() => setTab('approvals')} className={`px-4 py-3 text-sm ${tab==='approvals'?'border-b-2 border-cyan-300 text-white':'text-slate-500'}`}>Human Approval Queue</button></div>
@@ -39,7 +40,7 @@ export default function OperationsPage() {
         {tab === 'overview' ? <div className="mt-6 grid gap-6 lg:grid-cols-[420px_1fr]">
           <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-4">
             <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Active incidents</h2><span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-slate-400">LIVE VIEW</span></div>
-            <div className="space-y-2">{incidents.map(item => <button key={item.id} onClick={() => setSelected(item)} className={`w-full rounded-2xl border p-4 text-left transition ${selected.id===item.id?'border-cyan-300/40 bg-cyan-300/[0.07]':'border-white/5 bg-black/10 hover:border-white/15'}`}><div className="flex items-center justify-between gap-3"><span className="text-xs text-slate-500">{item.id}</span><span className="text-[10px] font-bold text-amber-300">{item.severity}</span></div><div className="mt-2 font-medium">{item.title}</div><div className="mt-1 text-xs text-slate-500">{item.signal} · {item.time}</div></button>)}</div>
+            <div className="space-y-2">{incidents.map(item => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full rounded-2xl border p-4 text-left transition ${selected.id===item.id?'border-cyan-300/40 bg-cyan-300/[0.07]':'border-white/5 bg-black/10 hover:border-white/15'}`}><div className="flex items-center justify-between gap-3"><span className="text-xs text-slate-500">{item.id}</span><span className="text-[10px] font-bold text-amber-300">{item.severity}</span></div><div className="mt-2 font-medium">{item.title}</div><div className="mt-1 text-xs text-slate-500">{item.signal} · {item.time}</div></button>)}</div>
           </section>
 
           <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">

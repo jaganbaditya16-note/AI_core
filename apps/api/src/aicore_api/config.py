@@ -17,6 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "staging", "production"]
 _ALLOWED_DB_SCHEMES = ("postgresql", "postgresql+psycopg")
+_ALLOWED_NEBIUS_HOSTS = {"api.tokenfactory.nebius.com", "api.tokenfactory.us-central1.nebius.com"}
 
 
 class Settings(BaseSettings):
@@ -52,7 +53,7 @@ class Settings(BaseSettings):
     # Optional hackathon integration. The core control plane remains functional when
     # these values are absent; the investigation route returns 503 instead of faking AI.
     nebius_api_key: SecretStr | None = None
-    nebius_base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1"
+    nebius_base_url: str = "https://api.tokenfactory.nebius.com/v1"
     nebius_model: str = "nvidia/Nemotron-3_5-Lightning"
     nebius_timeout_seconds: Annotated[int, Field(ge=2, le=60)] = 20
     nebius_max_output_tokens: Annotated[int, Field(ge=128, le=2000)] = 900
@@ -84,8 +85,10 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_nebius_base_url(cls, value: str) -> str:
         parsed = urlparse(value)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
-            raise ValueError("AICORE_NEBIUS_BASE_URL must be an HTTPS origin without query or fragment")
+        if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_NEBIUS_HOSTS:
+            raise ValueError("AICORE_NEBIUS_BASE_URL must use an approved HTTPS Nebius Token Factory host")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("AICORE_NEBIUS_BASE_URL must not contain credentials, query or fragment")
         return value.rstrip("/")
 
     @model_validator(mode="after")

@@ -6,7 +6,7 @@ import "server-only";
  * Everything here is server-only by construction: the `server-only` import makes
  * Next.js fail the build if this module is ever pulled into a Client Component.
  * Backend location, timeouts and any future API credentials must never reach the
- * browser — the browser talks to the same-origin proxy at /api/health instead.
+ * browser — the browser talks to same-origin server routes.
  */
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
@@ -58,6 +58,10 @@ function parseApiBaseUrl(raw: string | undefined): string {
     throw new Error(`API base URL must use http or https (received "${url.protocol}")`);
   }
 
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("API base URL must not contain credentials, query parameters or fragments");
+  }
+
   return url.origin;
 }
 
@@ -72,12 +76,17 @@ export function getServerEnv(): ServerEnv {
   const apiBaseUrl = parseApiBaseUrl(process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL);
   const apiTimeoutMs = parseTimeoutMs(process.env.API_REQUEST_TIMEOUT_MS);
   const nodeEnv = process.env.NODE_ENV ?? "development";
+  const isProduction = nodeEnv === "production";
+
+  if (isProduction && !apiBaseUrl.startsWith("https://")) {
+    throw new Error("Production API_INTERNAL_URL must use HTTPS");
+  }
 
   return {
     apiBaseUrl,
     apiTimeoutMs,
     nodeEnv,
-    isProduction: nodeEnv === "production",
+    isProduction,
   };
 }
 

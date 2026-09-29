@@ -113,9 +113,6 @@ class Settings(BaseSettings):
             if self.debug:
                 msg = "AICORE_DEBUG must be disabled in production"
                 raise ValueError(msg)
-            if self.docs_enabled:
-                msg = "AICORE_DOCS_ENABLED must be disabled in production"
-                raise ValueError(msg)
             wildcard = [origin for origin in self.cors_allow_origins if origin == "*"]
             if wildcard:
                 msg = 'AICORE_CORS_ALLOW_ORIGINS must not contain "*" in production'

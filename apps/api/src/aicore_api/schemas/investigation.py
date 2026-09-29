@@ -12,8 +12,10 @@ class InvestigationRead(BaseModel):
     detection_type: str
     risk_level: str
     summary: str
+    severity_interpretation: str
     why_it_matters: list[str]
     hypotheses: list[str]
+    evidence_used: list[str]
     checks: list[str]
     recommended_containment: list[str]
     confidence: str
@@ -22,7 +24,12 @@ class InvestigationRead(BaseModel):
     model: str
     correlation_id: str | None
     input_truncated: bool = Field(
-        description="True when the server bounded the detection before sending it to Nemotron."
+        description="True when the server bounded or redacted the detection before sending it to Nemotron."
+    )
+    evidence_digest: str = Field(
+        min_length=64,
+        max_length=64,
+        description="SHA-256 of the exact bounded evidence representation sent to the model; not source data.",
     )
     action_taken: bool = Field(
         default=False,

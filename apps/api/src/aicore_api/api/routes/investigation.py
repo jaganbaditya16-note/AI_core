@@ -19,6 +19,7 @@ from aicore_api.core.permissions import Permission
 from aicore_api.core.request_context import get_current_request_id
 from aicore_api.db.repositories.anomaly_detections import AnomalyDetectionRepository
 from aicore_api.nebius.investigator import (
+    InvestigatorBusyError,
     InvestigatorUnavailableError,
     InvestigatorUpstreamError,
     investigate,
@@ -34,11 +35,12 @@ ReadInvestigation = Annotated[
 @router.post(
     "/{organization_id}/risk/detections/{detection_id}/investigation",
     response_model=InvestigationRead,
-    summary="Ask Nemotron for a bounded advisory investigation of a recorded anomaly",
+    summary="Ask NVIDIA Nemotron for a bounded advisory investigation of a recorded anomaly",
     responses={
         401: {"description": "Missing or invalid credentials"},
         403: {"description": "The caller lacks audit.read"},
         404: {"description": "Detection does not exist for this organization"},
+        429: {"description": "Local investigation concurrency is saturated"},
         503: {"description": "Nebius Token Factory is not configured or unavailable"},
     },
 )
@@ -57,6 +59,8 @@ def investigate_detection(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Anomaly detection not found")
 
+    # Deliberately select fields instead of serializing the ORM object. Evidence is treated
+    # as untrusted data and is redacted/bounded again at the Nebius trust boundary.
     detection: dict[str, Any] = {
         "detection_id": str(row.id),
         "detection_type": row.detection_type,
@@ -82,6 +86,12 @@ def investigate_detection(
             detection,
             correlation_id=get_current_request_id(),
         )
+    except InvestigatorBusyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"code": "investigation_busy", "message": str(exc)},
+            headers={"Retry-After": "2"},
+        ) from exc
     except InvestigatorUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -98,8 +108,10 @@ def investigate_detection(
         detection_type=row.detection_type,
         risk_level=row.risk_level,
         summary=result.brief.summary,
+        severity_interpretation=result.brief.severity_interpretation,
         why_it_matters=result.brief.why_it_matters,
         hypotheses=result.brief.hypotheses,
+        evidence_used=result.brief.evidence_used,
         checks=result.brief.checks,
         recommended_containment=result.brief.recommended_containment,
         confidence=result.brief.confidence,
@@ -108,5 +120,6 @@ def investigate_detection(
         model=result.model,
         correlation_id=result.correlation_id,
         input_truncated=result.input_truncated,
+        evidence_digest=result.evidence_digest,
         action_taken=False,
     )

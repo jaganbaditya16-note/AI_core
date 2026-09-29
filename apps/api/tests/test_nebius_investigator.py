@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 from pydantic import SecretStr
@@ -53,7 +52,10 @@ def test_payload_is_bounded_and_redacts_sensitive_keys() -> None:
 
 def test_sanitize_redacts_bearer_and_jwt_like_values() -> None:
     value, changed = sanitize_for_model(
-        {"note": "Bearer " + "A" * 40, "session": "eyJ" + "A" * 20 + "." + "B" * 20 + "." + "C" * 20}
+        {
+            "note": "Bearer " + "A" * 40,
+            "session": "eyJ" + "A" * 20 + "." + "B" * 20 + "." + "C" * 20,
+        }
     )
     assert changed is True
     assert "Bearer " not in json.dumps(value)
@@ -94,7 +96,6 @@ def test_settings_do_not_require_nebius_for_core_startup() -> None:
 
 
 def test_investigation_contract_never_adds_execution_fields() -> None:
-    # This is intentionally a structural test rather than an inference-quality claim.
     from aicore_api.nebius.investigator import InvestigationBrief
 
     brief = InvestigationBrief(

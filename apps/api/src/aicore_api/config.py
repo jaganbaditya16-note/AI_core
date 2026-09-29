@@ -89,9 +89,13 @@ class Settings(BaseSettings):
     def _validate_nebius_base_url(cls, value: str) -> str:
         parsed = urlparse(value)
         if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_NEBIUS_HOSTS:
-            raise ValueError("AICORE_NEBIUS_BASE_URL must use an approved HTTPS Nebius Token Factory host")
+            raise ValueError(
+                "AICORE_NEBIUS_BASE_URL must use an approved HTTPS Nebius Token Factory host"
+            )
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("AICORE_NEBIUS_BASE_URL must not contain credentials, query or fragment")
+            raise ValueError(
+                "AICORE_NEBIUS_BASE_URL must not contain credentials, query or fragment"
+            )
         return value.rstrip("/")
 
     @field_validator("nebius_model")
@@ -108,6 +112,9 @@ class Settings(BaseSettings):
         if self.environment == "production":
             if self.debug:
                 msg = "AICORE_DEBUG must be disabled in production"
+                raise ValueError(msg)
+            if self.docs_enabled:
+                msg = "AICORE_DOCS_ENABLED must be disabled in production"
                 raise ValueError(msg)
             wildcard = [origin for origin in self.cors_allow_origins if origin == "*"]
             if wildcard:

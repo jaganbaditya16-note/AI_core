@@ -27,6 +27,12 @@ _SECRET_VALUE = re.compile(
     r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})",
     re.IGNORECASE,
 )
+_EXECUTABLE_GUIDANCE = re.compile(
+    r"(?:```|\$\s+|sudo\s+|rm\s+-rf|curl\s+https?://|wget\s+https?://|"
+    r"kubectl\s+|docker\s+|aws\s+|gcloud\s+|ssh\s+|python(?:3)?\s+-c\s+|"
+    r"powershell\s+-command)",
+    re.IGNORECASE,
+)
 
 
 def _redact(value: Any, *, depth: int = 0) -> tuple[Any, bool]:
@@ -113,4 +119,11 @@ def reject_secret_like_output(text: str) -> str:
         raise ValueError("model output exceeded the safety boundary")
     if _SECRET_VALUE.search(text):
         raise ValueError("model output contained credential-shaped material")
+    return text
+
+
+def reject_executable_guidance(text: str) -> str:
+    """Reject model output that has crossed from advisory prose into executable guidance."""
+    if _EXECUTABLE_GUIDANCE.search(text):
+        raise ValueError("model output contained executable guidance")
     return text

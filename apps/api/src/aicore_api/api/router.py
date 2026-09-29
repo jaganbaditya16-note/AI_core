@@ -1,20 +1,8 @@
 """Aggregate API router.
 
-Keeping a single place where routers are mounted means the URL surface of the API
-is reviewable at a glance — important for a control plane. The inventory's, the agent
-registry's, the policy record's, the action firewall's and the audit trail's routes are
-mounted under the same ``/organizations`` prefix as the membership and role routes: the
-tenant boundary is resolved once, from the path, for every tenant-scoped operation in the
-application.
-
-The action router is the only one that can execute something, and it is last but one on
-purpose: the execution path is the deepest in the application, and the surface above it
-should read as the layers it passes through. The audit router comes after it for a
-different reason — it is the one router that only ever reads, and it reads the record of
-what every router before it did. Monitoring comes after it because it is the layer above
-even that: it reads the same record in aggregate. Risk (Phase 10) comes last: it compares
-those aggregates against a baseline and explains what is unusual — read-only, and never an
-input to any router above it — so the order of this file is the order of the architecture.
+Keeping a single place where routers are mounted makes the URL surface of the API
+reviewable at a glance. The investigation router is deliberately placed after risk: it
+can explain a recorded finding, but it cannot authorize or execute an action.
 """
 
 from __future__ import annotations
@@ -28,6 +16,7 @@ from aicore_api.api.routes import (
     audit,
     health,
     identity,
+    investigation,
     monitoring,
     organizations,
     policies,
@@ -45,3 +34,4 @@ api_router.include_router(actions.router)
 api_router.include_router(audit.router)
 api_router.include_router(monitoring.router)
 api_router.include_router(risk.router)
+api_router.include_router(investigation.router)

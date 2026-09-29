@@ -36,8 +36,9 @@ def test_investigation_prompt_redacts_sensitive_evidence_keys() -> None:
 
 
 def test_investigation_prompt_rejects_oversized_evidence() -> None:
+    evidence = {"items": ["x" * 2000 for _ in range(8)]}
     with pytest.raises(ValueError, match="bounded model-input limit"):
-        build_investigation_prompt(evidence={"blob": "x" * MAX_EVIDENCE_CHARS}, question=None)
+        build_investigation_prompt(evidence=evidence, question=None)
 
 
 def _settings() -> Settings:

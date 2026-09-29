@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - "arena/**"
+      - "hackathon/**"
   pull_request:
     branches:
       - main
       - "arena/**"
+      - "hackathon/**"
 
 jobs:
   frontend:

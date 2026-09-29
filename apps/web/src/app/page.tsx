@@ -35,6 +35,20 @@ export default function Home() {
           NVIDIA Nemotron on Nebius Token Factory to help a reviewer understand what changed —
           without giving the model permission to execute or approve anything.
         </p>
+        <div className="mt-7 flex flex-wrap gap-3">
+          <Link
+            href="/operations"
+            className="inline-flex items-center rounded-lg bg-aicore-accent px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aicore-accent"
+          >
+            Open security operations
+          </Link>
+          <Link
+            href="/health"
+            className="inline-flex items-center rounded-lg border border-aicore-border px-4 py-2.5 text-sm font-medium text-aicore-fg-muted transition hover:bg-aicore-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aicore-accent"
+          >
+            Check system health
+          </Link>
+        </div>
       </FadeIn>
 
       <FadeIn delay={0.08}>
@@ -61,10 +75,10 @@ export default function Home() {
               </p>
             </div>
             <Link
-              href="/health"
-              className="inline-flex w-fit rounded-lg bg-aicore-accent px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aicore-accent"
+              href="/operations"
+              className="inline-flex w-fit rounded-lg border border-aicore-border px-4 py-2.5 text-sm font-medium text-aicore-fg-muted transition hover:bg-aicore-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aicore-accent"
             >
-              Check system health
+              View investigation workflow
             </Link>
           </div>
         </section>

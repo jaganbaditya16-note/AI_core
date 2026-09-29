@@ -28,7 +28,7 @@ def test_incident_lifecycle_is_closed() -> None:
         IncidentStatus.CLOSED: set(),
     }
     assert IncidentStatus.OPEN not in allowed[IncidentStatus.CLOSED]
-    assert IncidentStatus.CLOSED not in allowed[IncidentStatus.RESOLVED]
+    assert IncidentStatus.CLOSED in allowed[IncidentStatus.RESOLVED]
     assert IncidentStatus.ACKNOWLEDGED in allowed[IncidentStatus.OPEN]
 
 
@@ -45,5 +45,5 @@ def test_incident_description_is_bounded() -> None:
 def test_approval_states_are_terminal_after_review_or_expiry() -> None:
     assert ApprovalStatus.APPROVED.value == "approved"
     assert ApprovalStatus.EXPIRED.value == "expired"
-    assert ApprovalStatus.CONSUMED not in ApprovalStatus.__members__ if hasattr(ApprovalStatus, "CONSUMED") else True
+    assert ApprovalStatus.CANCELLED.value == "cancelled"
     assert datetime.now(UTC) + timedelta(hours=1) > datetime.now(UTC)

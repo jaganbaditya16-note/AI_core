@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from aicore_api.config import Settings
 from aicore_api.nebius.investigator import (
@@ -102,6 +102,14 @@ def test_settings_do_not_require_nebius_for_core_startup() -> None:
         nebius_api_key=None,
     )
     assert settings.nebius_api_key is None
+
+
+def test_settings_reject_non_nemotron_model() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            database_url=SecretStr("postgresql+psycopg://a:b@localhost/db"),
+            nebius_model="some-other-provider/model",
+        )
 
 
 def test_investigation_contract_never_adds_execution_fields() -> None:

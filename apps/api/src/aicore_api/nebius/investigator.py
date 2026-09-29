@@ -54,7 +54,6 @@ class InvestigationResult:
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
-
 _SYSTEM_PROMPT = """You are AICore's security investigation assistant.
 
 You are advisory only. You do not authorize, approve, execute, block, delete, or change
@@ -95,7 +94,7 @@ def _bounded(value: Any, *, budget: list[int]) -> tuple[Any, bool]:
             truncated = truncated or cut
         return result, truncated
     if isinstance(value, dict):
-        result = {}
+        result: dict[str, Any] = {}
         truncated = len(value) > 32
         for key, item in list(value.items())[:32]:
             bounded, cut = _bounded(item, budget=budget)
@@ -116,11 +115,15 @@ def _extract_json(text: str) -> dict[str, Any]:
         start = candidate.find("{")
         end = candidate.rfind("}")
         if start < 0 or end <= start:
-            raise InvestigatorUpstreamError("Nebius returned non-JSON investigation output") from None
+            raise InvestigatorUpstreamError(
+                "Nebius returned non-JSON investigation output"
+            ) from None
         try:
             parsed = json.loads(candidate[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise InvestigatorUpstreamError("Nebius returned invalid investigation JSON") from exc
+            raise InvestigatorUpstreamError(
+                "Nebius returned invalid investigation JSON"
+            ) from exc
     if not isinstance(parsed, dict):
         raise InvestigatorUpstreamError("Nebius investigation JSON must be an object")
     return parsed
@@ -153,8 +156,10 @@ def investigate(
             {"role": "system", "content": _SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": "Investigate this anomaly record and return the required JSON only:\n"
-                + json.dumps(bounded_detection, separators=(",", ":"), ensure_ascii=True),
+                "content": (
+                    "Investigate this anomaly record and return the required JSON only:\n"
+                    + json.dumps(bounded_detection, separators=(",", ":"), ensure_ascii=True)
+                ),
             },
         ],
     }
@@ -170,7 +175,9 @@ def investigate(
         },
     )
     try:
-        with urllib_request.urlopen(req, timeout=settings.nebius_timeout_seconds) as response:
+        with urllib_request.urlopen(  # noqa: S310 - URL is validated as HTTPS configuration
+            req, timeout=settings.nebius_timeout_seconds
+        ) as response:
             raw = response.read(1_000_000)
     except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError) as exc:
         raise InvestigatorUpstreamError("Nebius Token Factory inference failed") from exc
@@ -179,12 +186,16 @@ def investigate(
         envelope = json.loads(raw.decode("utf-8"))
         content = envelope["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise InvestigatorUpstreamError("Nebius returned an unexpected inference envelope") from exc
+        raise InvestigatorUpstreamError(
+            "Nebius returned an unexpected inference envelope"
+        ) from exc
 
     try:
         brief = InvestigationBrief.model_validate(_extract_json(str(content)))
     except ValidationError as exc:
-        raise InvestigatorUpstreamError("Nebius output failed the investigation contract") from exc
+        raise InvestigatorUpstreamError(
+            "Nebius output failed the investigation contract"
+        ) from exc
 
     return InvestigationResult(
         brief=brief,

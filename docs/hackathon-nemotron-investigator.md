@@ -203,11 +203,9 @@ For production scale:
 - record latency/token/error metrics without recording prompts or credentials;
 - use dedicated Nebius capacity when isolation or predictable throughput becomes necessary.
 
-Nebius currently documents public and dedicated inference paths and describes Token Factory as an OpenAI-compatible inference platform with autoscaling and production-oriented deployment options. citeturn0search6turn0search10
-
 ## Cost discipline
 
-The software stack itself is open-source Python/Next.js infrastructure. Nebius Token Factory inference is usage-priced, so the application deliberately bounds output tokens and concurrency. Current Nebius documentation lists Nemotron 3.5 Lightning at a low per-token public-endpoint price relative to larger Nemotron variants; exact pricing and availability should be rechecked before submission because they can change. citeturn0search2
+The software stack itself is open-source Python/Next.js infrastructure. Nebius Token Factory inference is usage-priced, so the application deliberately bounds output tokens and concurrency. Current Nebius documentation lists Nemotron 3.5 Lightning as a public model with per-token pricing; exact pricing and availability should be rechecked before submission because they can change.
 
 Do not describe the application as unlimited zero-cost production software merely because hackathon credits may be available.
 
@@ -223,9 +221,9 @@ Do not describe the application as unlimited zero-cost production software merel
 
 ## Nebius/NVIDIA requirement mapping
 
-The hackathon organizers explicitly require teams to explain what they used Nebius Token Factory/AI Cloud and the NVIDIA model for, what worked, what needs improvement, how onboarding felt, and whether they would build with the tools again. They also explicitly advise teams to hide API keys, name the required technologies in the project description/Built With section, and demonstrate them clearly in the three-minute video. citeturn1search0
+The hackathon organizers explicitly require teams to explain what they used Nebius Token Factory/AI Cloud and the NVIDIA model for, what worked, what needs improvement, how onboarding felt, and whether they would build with the tools again. They also explicitly advise teams to hide API keys, name the required technologies in the project description/Built With section, and demonstrate them clearly in the three-minute video.
 
-Nebius documents an OpenAI-compatible Token Factory API and a current Nemotron catalog including Nemotron 3.5 Lightning, with public inference available for the highlighted model. citeturn0search1turn0search2
+Nebius documents an OpenAI-compatible Token Factory API and a current Nemotron catalog including Nemotron 3.5 Lightning, with public inference available for the highlighted model.
 
 ### Feedback that must be measured, not invented
 

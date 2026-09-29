@@ -23,6 +23,7 @@ _SENSITIVE_KEY = re.compile(
 _SECRET_VALUE = re.compile(
     r"(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|"
     r"(?:sk|pk|api|key|token)[_-]?[A-Za-z0-9]{20,}|"
+    r"(?:ghp_|github_pat_|xoxb-|AIza|AKIA)[A-Za-z0-9_-]{16,}|"
     r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})",
     re.IGNORECASE,
 )
@@ -75,19 +76,29 @@ def serialize_bounded(value: dict[str, Any]) -> tuple[bytes, bool]:
         return encoded, False
 
     # Deterministic second-stage truncation: preserve structure, not arbitrary bytes.
-    reduced = {"safety_note": "Input exceeded the model boundary and was reduced.", "data": {}}
+    reduced = {
+        "safety_note": "Input exceeded the model boundary and was reduced.",
+        "data": {},
+    }
     data = value.get("data", value)
     if isinstance(data, dict):
         for key, item in data.items():
             reduced["data"][key] = item
-            candidate = json.dumps(reduced, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            candidate = json.dumps(
+                reduced,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
             if len(candidate) > MAX_INPUT_BYTES:
                 reduced["data"].pop(key)
                 reduced["truncated"] = True
                 break
     encoded = json.dumps(reduced, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     if len(encoded) > MAX_INPUT_BYTES:
-        encoded = b'{"safety_note":"Evidence was too large to send safely.","truncated":true}'
+        encoded = (
+            b'{"safety_note":"Evidence was too large to send safely.",'
+            b'"truncated":true}'
+        )
     return encoded, True
 
 

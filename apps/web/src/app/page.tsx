@@ -2,78 +2,72 @@ import Link from "next/link";
 import { FadeIn } from "@/components/fade-in";
 import { appVersion, serviceName } from "@/lib/service-info";
 
-const included = [
-  "Next.js + TypeScript (App Router) frontend skeleton",
-  "FastAPI + Pydantic backend with a health endpoint",
-  "PostgreSQL infrastructure and connection foundation",
-  "Docker Compose for frontend, backend and database",
-  "Pytest, Playwright and CI foundations",
-];
-
-const notYetImplemented = [
-  "AI inventory, agent/model/tool registries",
-  "Identity, permissions, policy, action firewall",
-  "Monitoring, audit, anomalies, incidents, kill switch",
-  "Nemotron / Nebius Token Factory integration",
+const pillars = [
+  ["01", "DETECT", "Deterministic anomaly detection and bounded evidence."],
+  ["02", "INVESTIGATE", "NVIDIA Nemotron on Nebius Token Factory turns evidence into hypotheses and verification checks."],
+  ["03", "DECIDE", "Humans and AICore authorization, policy and firewall controls remain authoritative."],
 ];
 
 export default function Home() {
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col justify-center gap-10 px-6 py-16">
+    <main className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col justify-center gap-10 px-6 py-16 sm:px-10">
       <FadeIn>
         <p className="font-mono text-xs tracking-[0.2em] text-aicore-fg-subtle uppercase">
-          Phase 0 · Foundation
+          AICore · AI security control plane
         </p>
-        <h1 className="mt-3 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-          AICore
+        <h1 className="mt-3 max-w-4xl text-4xl font-semibold tracking-tight text-balance sm:text-6xl">
+          Detect the anomaly. Understand the evidence. Keep the decision human.
         </h1>
-        <p className="mt-4 max-w-xl text-base leading-relaxed text-aicore-fg-muted">
-          An enterprise AI control plane: discover AI usage, control what it is allowed to do, and
-          monitor what it did. This repository currently contains{" "}
-          <strong className="font-medium text-aicore-fg">only the foundation</strong> — the
-          control-plane features are intentionally not implemented yet.
+        <p className="mt-5 max-w-2xl text-base leading-relaxed text-aicore-fg-muted sm:text-lg">
+          AICore connects deterministic AI-agent risk detection with a bounded NVIDIA Nemotron
+          investigation workflow on Nebius Token Factory — without giving the model authority to act.
         </p>
       </FadeIn>
 
       <FadeIn delay={0.1}>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <section className="rounded-xl border border-aicore-border bg-aicore-surface p-5">
-            <h2 className="text-sm font-medium text-aicore-fg">In this build</h2>
-            <ul className="mt-3 space-y-2 text-sm text-aicore-fg-muted">
-              {included.map((item) => (
-                <li key={item} className="flex gap-2">
-                  <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-aicore-ok" />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="rounded-xl border border-aicore-border bg-aicore-surface p-5">
-            <h2 className="text-sm font-medium text-aicore-fg">Not implemented yet</h2>
-            <ul className="mt-3 space-y-2 text-sm text-aicore-fg-subtle">
-              {notYetImplemented.map((item) => (
-                <li key={item} className="flex gap-2">
-                  <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-aicore-border" />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
+        <div className="grid gap-4 md:grid-cols-3">
+          {pillars.map(([number, title, text]) => (
+            <section key={number} className="rounded-2xl border border-aicore-border bg-aicore-surface p-5">
+              <span className="font-mono text-xs text-aicore-fg-subtle">{number}</span>
+              <h2 className="mt-3 text-sm font-semibold">{title}</h2>
+              <p className="mt-2 text-sm leading-relaxed text-aicore-fg-muted">{text}</p>
+            </section>
+          ))}
         </div>
       </FadeIn>
 
       <FadeIn delay={0.2}>
-        <div className="flex flex-wrap items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-4">
+          <Link
+            href="/investigator"
+            className="rounded-xl bg-aicore-accent px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aicore-accent"
+          >
+            Open Investigator
+          </Link>
           <Link
             href="/health"
-            className="rounded-lg bg-aicore-accent px-4 py-2 font-medium text-white transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aicore-accent"
+            className="rounded-xl border border-aicore-border px-5 py-3 text-sm font-medium transition hover:bg-aicore-surface"
           >
-            Open system health
+            System health
           </Link>
           <span className="font-mono text-xs text-aicore-fg-subtle">
             {serviceName} · v{appVersion}
           </span>
+        </div>
+      </FadeIn>
+
+      <FadeIn delay={0.3}>
+        <div className="rounded-2xl border border-aicore-border bg-aicore-surface p-6">
+          <p className="font-mono text-[11px] tracking-[0.18em] text-aicore-fg-subtle uppercase">
+            Trust boundary
+          </p>
+          <p className="mt-3 text-lg font-medium">
+            Nemotron investigates. AICore decides.
+          </p>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-aicore-fg-muted">
+            Model output is advisory, bounded, schema-validated and isolated from the action
+            execution path. The existing security controls remain the final authority.
+          </p>
         </div>
       </FadeIn>
     </main>

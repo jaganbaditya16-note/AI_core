@@ -17,7 +17,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "staging", "production"]
 _ALLOWED_DB_SCHEMES = ("postgresql", "postgresql+psycopg")
-_ALLOWED_NEBIUS_HOSTS = {"api.tokenfactory.nebius.com", "api.tokenfactory.us-central1.nebius.com"}
+_ALLOWED_NEBIUS_HOSTS = {
+    "api.tokenfactory.nebius.com",
+    "api.tokenfactory.us-central1.nebius.com",
+}
 
 
 class Settings(BaseSettings):
@@ -90,6 +93,15 @@ class Settings(BaseSettings):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("AICORE_NEBIUS_BASE_URL must not contain credentials, query or fragment")
         return value.rstrip("/")
+
+    @field_validator("nebius_model")
+    @classmethod
+    def _validate_nebius_model(cls, value: str) -> str:
+        if not value.startswith("nvidia/Nemotron"):
+            raise ValueError("AICORE_NEBIUS_MODEL must be an NVIDIA Nemotron model")
+        if len(value) > 160 or any(char.isspace() for char in value):
+            raise ValueError("AICORE_NEBIUS_MODEL must be a compact model identifier")
+        return value
 
     @model_validator(mode="after")
     def _enforce_production_defaults(self) -> Settings:

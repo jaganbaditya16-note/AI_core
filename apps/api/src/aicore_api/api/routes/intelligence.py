@@ -7,8 +7,8 @@ turn the endpoint into an unrestricted token-spending proxy.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
 from secrets import compare_digest
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from aicore_api.auth.dependencies import get_principal
 from aicore_api.config import get_settings
@@ -17,8 +17,6 @@ from aicore_api.schemas.intelligence import (
     IntelligenceAdvisoryRequest,
     IntelligenceAdvisoryResponse,
 )
-
-
 # The advisory endpoint has its own server-to-server credential and deliberately does
 # not require a tenant/user bearer token in production: the Next.js BFF holds the
 # service credential server-side. The existing authorization structure test models

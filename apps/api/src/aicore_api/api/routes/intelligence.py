@@ -7,8 +7,9 @@ turn the endpoint into an unrestricted token-spending proxy.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
 from secrets import compare_digest
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from aicore_api.auth.dependencies import get_principal
 from aicore_api.config import get_settings

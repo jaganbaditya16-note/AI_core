@@ -4,11 +4,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "AICore — Enterprise AI Control Plane",
+    default: "AICore — AI Security Operations Center",
     template: "%s · AICore",
   },
   description:
-    "AICore is an enterprise AI control plane. This build is the Phase 0 foundation: application skeleton, health checks, PostgreSQL infrastructure and tests — no control-plane features yet.",
+    "A deterministic enterprise AI control plane with policy enforcement, audit, anomaly analysis and bounded NVIDIA Nemotron advisory intelligence through Nebius Token Factory.",
   robots: { index: false, follow: false },
 };
 

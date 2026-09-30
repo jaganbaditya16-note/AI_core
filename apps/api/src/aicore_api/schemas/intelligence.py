@@ -24,7 +24,9 @@ class IntelligenceAdvisoryRequest(BaseModel):
     risk_level: str = Field(min_length=1, max_length=24)
     affected_agent: str | None = Field(default=None, max_length=120)
     signals: list[IntelligenceSignal] = Field(default_factory=list, max_length=12)
-    requested_focus: str = Field(default="Explain likely causes and safe next steps.", max_length=300)
+    requested_focus: str = Field(
+        default="Explain likely causes and safe next steps.", max_length=300
+    )
 
 
 class IntelligenceAdvisoryResponse(BaseModel):

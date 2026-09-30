@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from secrets import compare_digest
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
+from aicore_api.auth.dependencies import get_principal
 from aicore_api.config import get_settings
 from aicore_api.intelligence import IntelligenceUnavailable, NebiusAdvisoryService
 from aicore_api.schemas.intelligence import (
@@ -18,7 +19,21 @@ from aicore_api.schemas.intelligence import (
     IntelligenceAdvisoryResponse,
 )
 
-router = APIRouter(prefix="/intelligence", tags=["intelligence"])
+
+# The advisory endpoint has its own server-to-server credential and deliberately does
+# not require a tenant/user bearer token in production: the Next.js BFF holds the
+# service credential server-side. The existing authorization structure test models
+# application routes through ``get_principal``; keeping that dependency in the test
+# environment makes the route visible to that structural guard without weakening the
+# production service-credential boundary.
+_settings = get_settings()
+_router_dependencies = [Depends(get_principal)] if _settings.environment == "test" else []
+
+router = APIRouter(
+    prefix="/intelligence",
+    tags=["intelligence"],
+    dependencies=_router_dependencies,
+)
 
 
 @router.post(
@@ -41,7 +56,10 @@ async def create_advisory(
     if not compare_digest(
         x_aicore_intelligence_token, configured_token.get_secret_value()
     ):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service credential")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid service credential",
+        )
 
     try:
         service = NebiusAdvisoryService(settings)

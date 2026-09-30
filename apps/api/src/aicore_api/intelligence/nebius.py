@@ -87,5 +87,8 @@ class NebiusAdvisoryService:
             likely_causes=strings("likely_causes"),
             safe_next_steps=strings("safe_next_steps"),
             questions_for_reviewer=strings("questions_for_reviewer"),
-            safety_note="AI output is advisory only; AICore policy and firewall decisions remain deterministic.",
+            safety_note=(
+                "AI output is advisory only; AICore policy and firewall decisions "
+                "remain deterministic."
+            ),
         )

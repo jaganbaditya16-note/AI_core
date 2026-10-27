@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import ColumnElement, Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -166,7 +166,7 @@ class PolicyRepository(OrganizationScopedRepository):
         deliberately: the API must not be able to tell them apart.
         """
         statement = self._scoped(Policy).where(Policy.id == policy_id)
-        return self.execute(statement).unique().scalars().one_or_none()
+        return cast(Policy | None, self.execute(statement).unique().scalars().one_or_none())
 
     def page(
         self,

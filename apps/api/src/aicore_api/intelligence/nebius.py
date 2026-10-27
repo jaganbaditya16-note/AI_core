@@ -14,6 +14,11 @@ from aicore_api.schemas.intelligence import (
     IntelligenceAdvisoryResponse,
 )
 
+_MAX_ADVISORY_LENGTH = 4000
+_MAX_LIST_ITEMS = 6
+_MAX_ITEM_LENGTH = 500
+
+
 _SYSTEM_PROMPT = """You are the advisory reasoning layer inside AICore, an enterprise AI control
 plane.
 You are NOT an authorization engine and you never approve, deny, execute, contain, suspend, or
@@ -41,7 +46,7 @@ class NebiusAdvisoryService:
             api_key=settings.nebius_api_key.get_secret_value(),
             base_url=settings.nebius_base_url,
             timeout=20.0,
-            max_retries=1,
+            max_retries=0,
         )
 
     async def advise(self, request: IntelligenceAdvisoryRequest) -> IntelligenceAdvisoryResponse:
@@ -67,15 +72,23 @@ class NebiusAdvisoryService:
         if not content:
             raise RuntimeError("Nebius returned an empty advisory")
         try:
-            data: dict[str, Any] = json.loads(content)
+            parsed: Any = json.loads(content)
         except json.JSONDecodeError as exc:
             raise RuntimeError("Nebius returned invalid advisory JSON") from exc
+
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Nebius returned invalid advisory JSON object")
+        data: dict[str, Any] = parsed
 
         def strings(name: str) -> list[str]:
             value = data.get(name, [])
             if not isinstance(value, list):
                 return []
-            return [item for item in value if isinstance(item, str)][:6]
+            return [
+                item.strip()[:_MAX_ITEM_LENGTH]
+                for item in value
+                if isinstance(item, str) and item.strip()
+            ][:_MAX_LIST_ITEMS]
 
         advisory = data.get("advisory")
         if not isinstance(advisory, str) or not advisory.strip():
@@ -85,7 +98,7 @@ class NebiusAdvisoryService:
             provider="nebius-token-factory",
             model=self._model,
             generated_at=datetime.now(UTC).isoformat(),
-            advisory=advisory[:4000],
+            advisory=advisory.strip()[:_MAX_ADVISORY_LENGTH],
             likely_causes=strings("likely_causes"),
             safe_next_steps=strings("safe_next_steps"),
             questions_for_reviewer=strings("questions_for_reviewer"),

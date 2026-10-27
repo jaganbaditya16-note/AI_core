@@ -8,12 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:security": "node --experimental-strip-types --test scripts/intelligence-guard.test.mjs",
     "verify:motion": "node scripts/verify-motion.mjs"
   },
   "dependencies": {
     "@aicore/types": "*",
     "framer-motion": "^13.4.0",
-    "next": "16.3.5",
+    "next": "16.4.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1"
@@ -24,7 +25,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.5",
+    "eslint-config-next": "16.4.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

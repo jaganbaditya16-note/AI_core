@@ -151,7 +151,7 @@ def _prose() -> str:
     makes is still one claim, so a check about what the document *says* must read it that
     way instead of line by line.
     """
-    return " ".join(DOCUMENT.read_text().replace(">", " ").split())
+    return " ".join(DOCUMENT.read_text(encoding="utf-8").replace(">", " ").split())
 
 
 def _parameters(document: dict, path: str) -> dict[str, dict]:
@@ -185,7 +185,7 @@ def test_the_phase_is_the_modules_and_the_document_it_says_it_is() -> None:
         assert module.is_file(), module
     assert DOCUMENT.is_file(), DOCUMENT
 
-    text = DOCUMENT.read_text()
+    text = DOCUMENT.read_text(encoding="utf-8")
     for relative in DOCUMENTED_MODULES:
         assert relative in text, relative
 
@@ -418,7 +418,7 @@ REQUIRED_SUBJECTS = (
 
 @pytest.mark.parametrize("subject", REQUIRED_SUBJECTS)
 def test_the_document_states_what_the_phase_measures(subject: str) -> None:
-    assert subject.lower() in DOCUMENT.read_text().lower(), subject
+    assert subject.lower() in DOCUMENT.read_text(encoding="utf-8").lower(), subject
 
 
 #: What the phase withholds, and must say it withholds — the difference between a build
@@ -451,7 +451,7 @@ def test_the_document_names_every_capability_the_phase_withholds(capability: str
 
 
 def test_the_document_names_the_five_views_and_the_boundary_sentence() -> None:
-    text = DOCUMENT.read_text()
+    text = DOCUMENT.read_text(encoding="utf-8")
     for path in MONITORING_PATHS:
         assert f"/monitoring/{path.rsplit('/', 1)[-1]}" in text, path
 

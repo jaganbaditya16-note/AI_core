@@ -226,7 +226,7 @@ class AssetRepository(OrganizationScopedRepository):
         exactly what the API needs in order to answer without leaking existence.
         """
         statement = self._scoped(Asset).where(Asset.id == asset_id)
-        return self.execute(statement).scalars().unique().one_or_none()
+        return cast(Asset | None, self.execute(statement).scalars().unique().one_or_none())
 
     def page(
         self,
@@ -345,7 +345,7 @@ class AssetRepository(OrganizationScopedRepository):
         error it uses for an id that does not exist at all.
         """
         statement = self._scoped(Membership).where(Membership.id == membership_id)
-        return self.execute(statement).scalars().unique().one_or_none()
+        return cast(Membership | None, self.execute(statement).scalars().unique().one_or_none())
 
     def find_by_external_identifier(
         self, *, asset_type: str, external_identifier: str
@@ -355,7 +355,7 @@ class AssetRepository(OrganizationScopedRepository):
             Asset.asset_type == asset_type,
             Asset.external_identifier == external_identifier,
         )
-        return self.execute(statement).scalars().unique().one_or_none()
+        return cast(Asset | None, self.execute(statement).scalars().unique().one_or_none())
 
     # ── Writes ───────────────────────────────────────────────────────────────
 

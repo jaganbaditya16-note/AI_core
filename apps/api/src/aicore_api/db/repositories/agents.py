@@ -35,7 +35,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import Select, delete
 from sqlalchemy.exc import IntegrityError
@@ -236,7 +236,7 @@ class AgentRepository(OrganizationScopedRepository):
         what lets the API answer without leaking existence.
         """
         statement = self._with_asset().where(Agent.id == agent_id)
-        return self.execute(statement).unique().scalars().one_or_none()
+        return cast(Agent | None, self.execute(statement).unique().scalars().one_or_none())
 
     def find_by_identity(self, identity_id: uuid.UUID) -> Agent | None:
         """One agent by its stable identity — the lookup a runtime check would make.
@@ -246,12 +246,12 @@ class AgentRepository(OrganizationScopedRepository):
         made-up identifier gets.
         """
         statement = self._with_asset().where(Agent.identity_id == identity_id)
-        return self.execute(statement).unique().scalars().one_or_none()
+        return cast(Agent | None, self.execute(statement).unique().scalars().one_or_none())
 
     def find_by_asset(self, asset_id: uuid.UUID) -> Agent | None:
         """The registry record for an asset, if this organization has one."""
         statement = self._with_asset().where(Agent.asset_id == asset_id)
-        return self.execute(statement).unique().scalars().one_or_none()
+        return cast(Agent | None, self.execute(statement).unique().scalars().one_or_none())
 
     def page(
         self,
@@ -315,10 +315,11 @@ class AgentRepository(OrganizationScopedRepository):
         many-to-one, so it can neither multiply rows nor interact badly with
         ``LIMIT``.
         """
-        return (
+        return cast(
+            Select[Any],
             self._scoped(Agent)
             .join(Asset, Asset.id == Agent.asset_id)
-            .options(contains_eager(Agent.asset))
+            .options(contains_eager(Agent.asset)),
         )
 
     def _filtered(

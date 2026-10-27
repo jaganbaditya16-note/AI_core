@@ -55,6 +55,7 @@ from aicore_api.core.permissions import Action, Permission, Resource
 from aicore_api.core.policy import (
     ConditionField,
     PolicyContextError,
+    PolicyDefinition,
     PolicyDefinitionError,
     PolicyEffect,
     PolicyStatus,
@@ -66,7 +67,6 @@ from aicore_api.core.policy import (
 from aicore_api.core.policy_engine import (
     PolicyContext,
     PolicyDecision,
-    PolicyDefinition,
     evaluate_policies,
 )
 from aicore_api.db.models.policy import Policy

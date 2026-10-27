@@ -18,6 +18,7 @@ Two shapes live here, and the difference between them is the point:
 from __future__ import annotations
 
 import uuid
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -75,7 +76,7 @@ class MembershipRepository(OrganizationScopedRepository):
         :func:`aicore_api.auth.authorization.resolve_organization_context`.
         """
         statement = self._scoped(Membership).where(Membership.user_id == user_id)
-        return self.execute(statement).scalars().unique().one_or_none()
+        return cast(Membership | None, self.execute(statement).scalars().unique().one_or_none())
 
     def list_members(self) -> list[Membership]:
         """Every member of this organization, oldest membership first.

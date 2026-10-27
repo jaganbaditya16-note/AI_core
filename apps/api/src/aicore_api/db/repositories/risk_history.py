@@ -32,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import ColumnElement, Integer, Select, Text, cast, func, select
-from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import InstrumentedAttribute
 
 from aicore_api.core.audit import AuditEventType
@@ -256,7 +256,7 @@ class RiskHistoryRepository(OrganizationScopedRepository):
             .over(partition_by=(per_item.c.agent_id, is_novel), order_by=per_item.c.item.asc())
             .label("rank"),
         ).subquery()
-        sample = array_agg(aggregate_order_by(ranked.c.item, ranked.c.item.asc())).filter(
+        sample = func.array_agg(aggregate_order_by(ranked.c.item, ranked.c.item.asc())).filter(
             ranked.c.novel, ranked.c.rank <= MAX_EVIDENCE_ITEMS
         )
         statement = select(

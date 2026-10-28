@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "installedAt": "2026-09-17",
+  "tools": {
+    "gstack": {
+      "repo": "https://github.com/garrytan/gstack.git",
+      "commit": "a6b3a57512ca6d5c6aa5b68f74f736195021f96e",
+      "version": "1.87.4",
+      "install": "~/.claude/skills/gstack + ./setup (GSTACK_SKIP_PLAYWRIGHT=1, GSTACK_SKIP_CSO_BUILD=1)",
+      "skills": 55,
+      "notes": "browser skills require Aside (macOS) or a Chromium install; both skipped here"
+    },
+    "superpowers": {
+      "repo": "https://github.com/obra/superpowers.git",
+      "commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "version": "6.3.0",
+      "install": "vendored at .agents/skills/* + mirrored to .claude/skills/* and ~/.claude/skills/*",
+      "skills": 14
+    },
+    "ruflo": {
+      "repo": "https://github.com/ruvnet/ruflo.git",
+      "commit": "6f0ed7112873eedc7cfe17281a2585188190b790",
+      "version": "3.42.3",
+      "install": "npx ruflo@latest init --dual --minimal --no-skills-sh",
+      "skills": 3,
+      "notes": "full init + agentdb/hybrid memory abort on hosts with < ~5GB RAM"
+    },
+    "21st-dev": {
+      "cli": "@21st-dev/cli",
+      "install": "npx @21st-dev/cli@latest init --design-context (+ MCP server `21st` in .mcp.json)",
+      "auth": "npx @21st-dev/cli@latest login  |  API_KEY_21ST / TWENTYFIRST_TOKEN",
+      "status": "design context written; registry calls require login"
+    },
+    "framer-motion": {
+      "package": "framer-motion",
+      "range": "^13.4.0",
+      "install": "npm install framer-motion  |  yarn add framer-motion"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "aicore",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AICore — Enterprise AI Control Plane (Phase 0 foundation)",
+  "license": "SEE LICENSE IN LICENSE",
+  "workspaces": [
+    "apps/web",
+    "packages/types"
+  ],
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @aicore/web",
+    "dev:api": "bash scripts/dev-api.sh",
+    "build": "npm run build --workspace @aicore/web",
+    "lint": "npm run lint --workspace @aicore/web",
+    "lint:api": "bash scripts/py.sh -m ruff check apps/api/src apps/api/tests",
+    "format": "prettier --write . ; bash scripts/py.sh -m ruff format apps/api/src apps/api/tests",
+    "format:check": "prettier --check . ; bash scripts/py.sh -m ruff format --check apps/api/src apps/api/tests",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck:api": "bash scripts/py.sh -m mypy apps/api/src",
+    "test:api": "bash scripts/py.sh -m pytest -c apps/api/pyproject.toml apps/api/tests",
+    "test:e2e": "playwright test",
+    "verify": "bash scripts/verify.sh",
+    "verify:motion": "npm run verify:motion --workspace @aicore/web",
+    "check:secrets": "bash scripts/check-secrets.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "prettier": "^3.6.2"
+  }
+}

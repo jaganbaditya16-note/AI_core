@@ -1,0 +1,58 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Build output ──────────────────────────────────────────────────────────────
+dist/
+out/
+.next/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Local PostgreSQL (scripts/test-db.sh) ─────────────────────────────────────
+.pgdata/
+
+# ── Tests / reports ───────────────────────────────────────────────────────────
+playwright-report/
+blob-report/
+test-results/
+playwright/.cache/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Editors / OS ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+*.swp
+
+# ── Developer agent tooling (never part of the AICore runtime) ────────────────
+tools/
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+.swarm/*.db
+ruvector.db
+*.rvf.lock
+.codex/
